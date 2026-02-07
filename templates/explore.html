@@ -1,43 +1,96 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="main" style="padding: 20px;">
-    <h2>Поиск</h2>
-    <form style="display: flex; gap: 10px; margin-bottom: 20px;">
-        <input type="text" name="q" value="{{ query }}" placeholder="Поиск людей или групп..." class="input-box">
-        <button class="btn">Искать</button>
-    </form>
+<div class="chat-area" style="display: flex; flex-direction: column; overflow-y: auto; padding: 32px; grid-column: 2 / 4 !important;">
+    <div style="max-width: 900px; margin: 0 auto; width: 100%;">
+        <h1 style="font-size: 2rem; font-weight: 700; color: var(--text-main); margin-bottom: 24px;">Explore</h1>
+        
+        <form style="display: flex; gap: 10px; margin-bottom: 32px;">
+            <input type="text" name="q" value="{{ query }}" placeholder="Search servers and people..." class="custom-input" style="flex: 1;">
+            <button class="btn btn-login">Search</button>
+        </form>
 
-    <h3>Комнаты</h3>
-    <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 20px;">
-        {% for room in rooms %}
-        <div style="background: #2f3136; padding: 15px; border-radius: 8px; width: 200px;">
-            {% if room.avatar_url %}
-            <img src="{{ room.avatar_url }}" style="width: 50px; height: 50px; border-radius: 50%; object-fit: cover; margin-bottom: 10px;">
-            {% endif %}
-            <h4>{{ room.name }}</h4>
-            <p style="font-size: 0.8em; color: #aaa;">{{ room.type }}</p>
-            <a href="{{ url_for('join_room_view', room_id=room.id) }}" class="btn">Вступить</a>
-        </div>
-        {% endfor %}
-    </div>
-
-    <h3>Люди</h3>
-    <div style="display: flex; flex-wrap: wrap; gap: 10px;">
-        {% for u in users %}
-        <div style="background: #2f3136; padding: 15px; border-radius: 8px; display: flex; align-items: center; gap: 10px;">
-            <div class="avatar"><img src="{{ u.avatar_url }}"></div>
-            <div>
-                <div>{{ u.username }}</div>
-                {% if u.id != current_user.id %}
-                <a href="{{ url_for('start_dm', user_id=u.id) }}" style="font-size: 0.8em; color: #007bff;">Написать</a>
-                {% endif %}
-                
-                {% if current_user.is_superuser %}
-                 <br><span style="color: red; font-size: 0.7em;">[ADMIN: Ban]</span>
-                {% endif %}
+        <!-- Servers Section -->
+        <section style="margin-bottom: 40px;">
+            <h2 style="font-size: 1.3rem; font-weight: 700; color: var(--text-main); margin-bottom: 16px;">Servers</h2>
+            <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px;">
+                {% for room in rooms %}
+                <div class="card" style="display: flex; flex-direction: column;">
+                    <div style="text-align: center; margin-bottom: 12px; flex-shrink: 0;">
+                        {% if room.avatar_url and room.avatar_url != "https://via.placeholder.com/100" %}
+                        <img src="{{ room.avatar_url }}" style="width: 64px; height: 64px; border-radius: 50%; object-fit: cover; margin-bottom: 10px; border: 2px solid var(--primary);">
+                        {% else %}
+                        <div style="width: 64px; height: 64px; border-radius: 50%; background: var(--bg-panel); display: flex; align-items: center; justify-content: center; margin: 0 auto 10px; border: 2px solid var(--primary);">
+                            <span class="material-icons-round" style="font-size: 32px; color: var(--text-muted);">public</span>
+                        </div>
+                        {% endif %}
+                    </div>
+                    <h3 style="margin: 0 0 4px; font-size: 1rem; font-weight: 600; text-align: center; color: var(--text-main);">{{ room.name }}</h3>
+                    <p style="font-size: 0.85rem; color: var(--text-muted); text-align: center; margin: 0 0 12px; text-transform: capitalize;">{{ room.type }}</p>
+                    <a href="{{ url_for('main.join_room_view', room_id=room.id) }}" class="btn btn-login" style="width: 100%; margin-top: auto;">Join Server</a>
+                </div>
+                {% endfor %}
             </div>
-        </div>
-        {% endfor %}
+            {% if not rooms %}
+            <div style="text-align: center; padding: 40px; color: var(--text-muted);">
+                No servers found.
+            </div>
+            {% endif %}
+        </section>
+
+        <!-- Users Section -->
+        <section>
+            <h2 style="font-size: 1.3rem; font-weight: 700; color: var(--text-main); margin-bottom: 16px;">People</h2>
+            <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px;">
+                {% for u in users %}
+                <div class="card" style="display: flex; flex-direction: column;">
+                    <div style="text-align: center; margin-bottom: 16px; flex-shrink: 0;">
+                        {% if u.avatar_url and u.avatar_url != "https://via.placeholder.com/50" %}
+                        <img src="{{ u.avatar_url }}" style="width: 72px; height: 72px; border-radius: 50%; object-fit: cover; border: 2px solid var(--primary); margin: 0 auto 8px; display: block;">
+                        {% else %}
+                        <div style="width: 72px; height: 72px; border-radius: 50%; background: var(--bg-panel); display: flex; align-items: center; justify-content: center; margin: 0 auto 8px; border: 2px solid var(--primary);">
+                            <span class="material-icons-round" style="font-size: 40px; color: var(--text-muted);">person</span>
+                        </div>
+                        {% endif %}
+                        <h4 style="margin: 0 0 4px; font-size: 0.95rem; font-weight: 600; color: var(--text-main);">{{ u.username }}</h4>
+                    </div>
+                    {% if u.bio %}
+                    <p style="font-size: 0.85rem; color: var(--text-muted); margin: 0 0 12px; text-align: center; flex: 1;">{{ u.bio[:60] }}{% if u.bio|length > 60 %}...{% endif %}</p>
+                    {% endif %}
+                    <div style="display: flex; gap: 8px; flex-shrink: 0;">
+                        {% if u.id != current_user.id %}
+                        <a href="{{ url_for('main.start_dm', user_id=u.id) }}" class="btn btn-login" style="flex: 1; font-size: 0.9rem;">Message</a>
+                        {% else %}
+                        <div style="flex: 1; text-align: center; padding: 8px; color: var(--text-muted); font-size: 0.9rem;">(You)</div>
+                        {% endif %}
+                        
+                        {% if current_user.is_superuser %}
+                        <button type="button" class="btn btn-login" onclick="banUser({{ u.id }})" style="background: var(--danger); flex: 1; font-size: 0.9rem;">Ban</button>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% if not users %}
+            <div style="text-align: center; padding: 40px; color: var(--text-muted);">
+                No users found.
+            </div>
+            {% endif %}
+        </section>
     </div>
 </div>
+
+<script>
+function banUser(userId) {
+    if (!confirm('Ban this user?')) return;
+    fetch(`/user/${userId}/ban`, { method: 'POST' })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            location.reload();
+        } else {
+            alert('Error: ' + (data.error || 'Unknown error'));
+        }
+    });
+}
+</script>
 {% endblock %}

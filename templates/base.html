@@ -1,137 +1,118 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>TheComBoxMSGR</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0, viewport-fit=cover">
+    <title>BoxChat</title>
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <style>
-        body { display: flex; height: 100vh; margin: 0; font-family: sans-serif; background: #202225; color: #dcddde; }
-        a { color: inherit; text-decoration: none; }
-        
-        /* Sidebar (Слева) */
-        .sidebar { width: 70px; background: #2f3136; display: flex; flex-direction: column; align-items: center; padding-top: 10px; gap: 10px;}
-        .server-icon { width: 50px; height: 50px; background: #36393f; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: 0.2s; overflow: hidden;}
-        .server-icon:hover { border-radius: 30%; background: #007bff; }
-        .server-icon img { width: 100%; height: 100%; object-fit: cover; }
-        
-        /* Панель (Вторая колонка) */
-        .panel { width: 240px; background: #2f3136; border-left: 1px solid #202225; display: flex; flex-direction: column; }
-        .panel-header { padding: 15px; border-bottom: 1px solid #202225; font-weight: bold; }
-        .channel-list { padding: 10px; overflow-y: auto; flex: 1; }
-        .channel-item { padding: 5px 10px; margin: 2px 0; border-radius: 4px; cursor: pointer; color: #8e9297; }
-        .channel-item:hover, .channel-item.active { background: #393c43; color: #fff; }
-        
-        /* Главная область */
-        .main { flex: 1; background: #36393f; display: flex; flex-direction: column; }
-        .chat-header { padding: 15px; border-bottom: 1px solid #202225; box-shadow: 0 1px 0 rgba(0,0,0,0.1); }
-        .messages { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 15px; }
-        .message { display: flex; gap: 10px; align-items: flex-start; }
-        .avatar { width: 40px; height: 40px; border-radius: 50%; background: #555; overflow: hidden; flex-shrink: 0; }
-        .avatar img { width: 100%; height: 100%; object-fit: cover; }
-        .msg-content { display: flex; flex-direction: column; }
-        .msg-meta { font-size: 0.8em; color: #72767d; margin-bottom: 2px; }
-        .msg-text { line-height: 1.4; white-space: pre-line; word-wrap: break-word; }
-        
-        /* Ввод */
-        .input-area { padding: 20px; background: #36393f; }
-        .input-box { width: 100%; padding: 12px; background: #40444b; border: none; border-radius: 8px; color: white; outline: none; }
-        
-        /* Кнопки */
-        .btn { background: #007bff; padding: 5px 10px; border-radius: 4px; color: white; border: none; cursor: pointer; }
-        .btn-red { background: #d9534f; }
-        
-        /* Модальные окна */
-        .modal-overlay {
-            display: none;
+        /* Legacy context menu styles */
+        .context-menu {
             position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.7);
-            z-index: 10000;
-            align-items: center;
-            justify-content: center;
+            background: var(--bg-panel);
+            border-radius: var(--radius-sm);
+            padding: 4px;
+            min-width: 200px;
+            box-shadow: 0 8px 16px rgba(0,0,0,0.24);
+            z-index: 10004;
+            display: none;
+            border: 1px solid var(--border);
         }
-        .modal {
-            background: #2f3136;
-            border-radius: 8px;
-            min-width: 400px;
-            max-width: 90%;
-            max-height: 90%;
-            overflow-y: auto;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
-        }
-        .modal-header {
-            padding: 20px;
-            border-bottom: 1px solid #202225;
-            font-weight: bold;
-            font-size: 1.1em;
-        }
-        .modal-body {
-            padding: 20px;
-        }
-        .modal-footer {
-            padding: 15px 20px;
-            border-top: 1px solid #202225;
-            display: flex;
-            gap: 10px;
-            justify-content: flex-end;
-        }
-        .modal-btn {
-            padding: 8px 16px;
-            border: none;
-            border-radius: 4px;
+        .context-menu-item {
+            padding: 8px 12px;
+            color: var(--text-muted);
             cursor: pointer;
+            border-radius: 2px;
             font-size: 0.9em;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: 0.15s;
         }
-        .modal-btn-primary {
-            background: #5865f2;
+        .context-menu-item:hover {
+            background: var(--primary);
+            color: var(--bg-dark);
+        }
+        .context-menu-item.danger:hover {
+            background: var(--danger);
             color: white;
         }
-        .modal-btn-primary:hover {
-            background: #4752c4;
-        }
-        .modal-btn-secondary {
-            background: #4f545c;
-            color: white;
-        }
-        .modal-btn-secondary:hover {
-            background: #5d6269;
+        .context-menu-separator {
+            height: 1px;
+            background: var(--border);
+            margin: 4px 0;
         }
     </style>
 </head>
 <body>
+    <div class="chat-layout">
     <div class="sidebar">
-        <a href="{{ url_for('dashboard') }}" class="server-icon" title="Главная">🏠</a>
-        <a href="{{ url_for('explore') }}" class="server-icon" title="Поиск">🔍</a>
-        <hr style="width: 40%; border: 0; border-top: 2px solid #36393f;">
+        <a href="{{ url_for('main.dashboard') }}" class="nav-item" title="Dashboard">
+            <div class="icon-circle">
+                <span class="material-icons-round">person</span>
+            </div>
+        </a>
+        <a href="{{ url_for('main.explore') }}" class="nav-item" title="Explore">
+            <div class="icon-circle">
+                <span class="material-icons-round">explore</span>
+            </div>
+        </a>
+        <hr style="width: 40%; border: 0; border-top: 1px solid var(--border); margin: 10px 0;">
         
         {% for s in current_user.memberships %}
             {% if s.room and s.room.type != 'dm' %}
-            <a href="{{ url_for('view_room', room_id=s.room.id) }}" class="server-icon sidebar-server" data-room-id="{{ s.room.id }}" data-role="{{ s.role }}" title="{{ s.room.name }}">
-                {% if s.room.avatar_url %}
-                    <img src="{{ s.room.avatar_url }}" alt="{{ s.room.name }}">
-                {% else %}
-                    {{ s.room.name[:2] }}
-                {% endif %}
+            <a href="{{ url_for('main.view_room', room_id=s.room.id) }}" class="nav-item sidebar-server" data-room-id="{{ s.room.id }}" data-role="{{ s.role }}" title="{{ s.room.name }}">
+                <div class="icon-circle">
+                    {% if s.room.avatar_url %}
+                        <img src="{{ s.room.avatar_url }}" alt="{{ s.room.name }}" style="width:100%; height:100%; border-radius:50%; object-fit:cover;">
+                    {% else %}
+                        {{ s.room.name[:2] }}
+                    {% endif %}
+                </div>
             </a>
             {% endif %}
         {% endfor %}
         
-        <hr style="width: 40%; border: 0; border-top: 2px solid #36393f; margin: 10px 0;">
+        <hr style="width: 50%; border: 0; border-top: 1px solid var(--border); margin: 8px 0;">
         
-        <button class="server-icon" onclick="showCreateRoomModal(); return false;" style="background: #36393f; border: none; cursor: pointer;" title="Создать сервер/блог">➕</button>
+        <button class="nav-item" onclick="showCreateRoomModal(); return false;" style="background: none; border: none; cursor: pointer;" title="Create Room">
+            <div class="icon-circle">
+                <span class="material-icons-round">add_circle</span>
+            </div>
+        </button>
         
         <div id="stickerPacksContainer" style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 10px;">
-            <!-- Стикерпаки будут добавлены через JavaScript -->
+            <!-- Stickerpack icons will be added here -->
         </div>
         
-        <button class="server-icon" onclick="showCreateStickerPackModal(); return false;" style="background: #36393f; border: none; cursor: pointer;" title="Создать стикерпак">📦</button>
+        <button class="nav-item" onclick="showCreateStickerPackModal(); return false;" style="background: none; border: none; cursor: pointer;" title="Create Stickerpack">
+            <div class="icon-circle">
+                <span class="material-icons-round">collections</span>
+            </div>
+        </button>
         
-        <a href="{{ url_for('settings') }}" class="server-icon" style="margin-top: auto; margin-bottom: 10px;" title="Настройки">⚙️</a>
-        <a href="{{ url_for('logout') }}" class="server-icon" style="margin-bottom: 10px; background: #d9534f;" title="Выход">🚪</a>
+        <div style="flex: 1; display: flex; flex-direction: column; gap: 10px; overflow-y: auto;">
+        </div>
+        
+        <hr style="width: 50%; border: 0; border-top: 1px solid var(--border); margin: 8px 0;">
+        
+        <div style="display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 8px 0;">
+            <a href="{{ url_for('api.settings') }}" class="nav-item" title="Settings">
+                <div class="icon-circle">
+                    <span class="material-icons-round">settings</span>
+                </div>
+            </a>
+            <a href="{{ url_for('auth.logout') }}" class="nav-item" title="Logout">
+                <div class="icon-circle" style="background: var(--danger);">
+                    <span class="material-icons-round">logout</span>
+                </div>
+            </a>
+        </div>
     </div>
 
     {% block content %}{% endblock %}
+    </div>
 
 <script>
 // Загружаем стикерпаки при загрузке страницы
@@ -299,7 +280,7 @@ document.addEventListener('DOMContentLoaded', function() {
     sidebarContextMenu.style.cssText = 'position: fixed; background: #18191c; border-radius: 4px; padding: 4px; min-width: 200px; box-shadow: 0 8px 16px rgba(0,0,0,0.24); z-index: 10004; display: none;';
     sidebarContextMenu.innerHTML = `
         <div class="context-menu-item" onclick="sidebarInviteToServer()">Пригласить</div>
-        <div class="context-menu-separator" style="height: 1px; background: #4f545c; margin: 4px 0;"></div>
+        <div class="context-menu-separator" id="sidebarMenuSeparator" style="height: 1px; background: #4f545c; margin: 4px 0;"></div>
         <div class="context-menu-item danger" onclick="sidebarDeleteServer()">Удалить сервер</div>
         <div class="context-menu-item danger" onclick="sidebarLeaveServer()">Покинуть сервер</div>
     `;
@@ -326,10 +307,19 @@ document.addEventListener('DOMContentLoaded', function() {
             // Показываем/скрываем пункты меню в зависимости от роли
             const canInvite = sidebarContextMenuServerRole === 'owner' || sidebarContextMenuServerRole === 'admin';
             const canDelete = sidebarContextMenuServerRole === 'owner' || sidebarContextMenuServerRole === 'admin';
+            const canLeave = sidebarContextMenuServerRole !== 'owner';
+            
             const menuItems = menu.querySelectorAll('.context-menu-item');
+            const separator = document.getElementById('sidebarMenuSeparator');
+            
             if (menuItems[0]) menuItems[0].style.display = canInvite ? 'flex' : 'none'; // Пригласить
-            if (menuItems[2]) menuItems[2].style.display = canDelete ? 'flex' : 'none'; // Удалить
-            if (menuItems[3]) menuItems[3].style.display = sidebarContextMenuServerRole !== 'owner' ? 'flex' : 'none'; // Покинуть
+            if (menuItems[1]) menuItems[1].style.display = canDelete ? 'flex' : 'none'; // Удалить
+            if (menuItems[2]) menuItems[2].style.display = canLeave ? 'flex' : 'none'; // Покинуть
+            
+            // Показываем разделитель только если есть обе кнопки (удалить И покинуть)
+            if (separator) {
+                separator.style.display = (canDelete && canLeave) ? 'block' : 'none';
+            }
         }
     }, true); // Используем capture phase для перехвата события раньше
     
@@ -397,7 +387,7 @@ document.addEventListener('DOMContentLoaded', function() {
             .then(r => r.json())
             .then(data => {
                 if (data.success) {
-                    location.reload();
+                    window.location.href = "{{ url_for('main.dashboard') }}";
                 } else {
                     if (typeof showAlert === 'function') {
                         showAlert('Ошибка: ' + (data.error || 'Неизвестная ошибка'));
@@ -418,7 +408,7 @@ document.addEventListener('DOMContentLoaded', function() {
             .then(r => r.json())
             .then(data => {
                 if (data.success) {
-                    location.reload();
+                    window.location.href = "{{ url_for('main.dashboard') }}";
                 } else {
                     if (typeof showAlert === 'function') {
                         showAlert('Ошибка: ' + (data.error || 'Неизвестная ошибка'));
@@ -469,46 +459,56 @@ document.addEventListener('DOMContentLoaded', function() {
 </style>
 </script>
 
-<!-- Модальное окно создания комнаты -->
+<!-- Modal: Create Room -->
 <div class="modal-overlay" id="createRoomModal">
     <div class="modal">
-        <div class="modal-header">Создать комнату</div>
+        <div class="modal-header">Create Server</div>
         <form id="createRoomForm" onsubmit="submitCreateRoom(event); return false;">
             <div class="modal-body">
-                <label style="display: block; margin-bottom: 5px;">Название:</label>
-                <input type="text" id="roomName" class="input-box" style="margin-bottom: 15px;" required>
-                <label style="display: block; margin-bottom: 5px;">Тип:</label>
-                <select id="roomType" class="input-box" style="margin-bottom: 15px;">
-                    <option value="server">Сервер (С чатами)</option>
-                    <option value="broadcast">Блог (Только чтение)</option>
-                </select>
-                <label style="display: flex; align-items: center; gap: 10px;">
-                    <input type="checkbox" id="roomPublic">
-                    Публичный (виден в поиске)
-                </label>
+                <div class="input-group">
+                    <label class="input-label">Server Name</label>
+                    <input type="text" id="roomName" class="custom-input" required>
+                </div>
+                <div class="input-group">
+                    <label class="input-label">Type</label>
+                    <select id="roomType" class="custom-input">
+                        <option value="server">Server (with channels)</option>
+                        <option value="broadcast">Blog (read-only)</option>
+                    </select>
+                </div>
+                <div class="input-group">
+                    <label style="display: flex; align-items: center; gap: 10px; padding: 12px; background: rgba(167, 139, 250, 0.1); border-radius: var(--radius-sm); cursor: pointer; margin: 0;">
+                        <input type="checkbox" id="roomPublic" style="cursor: pointer; width: 18px; height: 18px;">
+                        <span style="font-size: 0.95rem;">Public (visible in search)</span>
+                    </label>
+                </div>
             </div>
             <div class="modal-footer">
-                <button type="button" class="modal-btn modal-btn-secondary" onclick="closeModal('createRoomModal')">Отмена</button>
-                <button type="submit" class="modal-btn modal-btn-primary">Создать</button>
+                <button type="button" class="btn btn-secondary" onclick="closeModal('createRoomModal')">Cancel</button>
+                <button type="submit" class="btn btn-login">Create</button>
             </div>
         </form>
     </div>
 </div>
 
-<!-- Модальное окно создания стикерпака -->
+<!-- Modal: Create Stickerpack -->
 <div class="modal-overlay" id="createStickerPackModal">
     <div class="modal">
-        <div class="modal-header">Создать стикерпак</div>
+        <div class="modal-header">Create Stickerpack</div>
         <form id="createStickerPackForm" onsubmit="submitCreateStickerPack(event); return false;">
             <div class="modal-body">
-                <label style="display: block; margin-bottom: 5px;">Название:</label>
-                <input type="text" id="packName" class="input-box" style="margin-bottom: 15px;" required>
-                <label style="display: block; margin-bottom: 5px;">Эмодзи для иконки:</label>
-                <input type="text" id="packEmoji" class="input-box" style="margin-bottom: 15px;" value="📦" maxlength="2">
+                <div class="input-group">
+                    <label class="input-label">Stickerpack Name:</label>
+                    <input type="text" id="packName" class="custom-input" required>
+                </div>
+                <div class="input-group">
+                    <label class="input-label">Icon Emoji:</label>
+                    <input type="text" id="packEmoji" class="custom-input" value="📦" maxlength="2">
+                </div>
             </div>
             <div class="modal-footer">
-                <button type="button" class="modal-btn modal-btn-secondary" onclick="closeModal('createStickerPackModal')">Отмена</button>
-                <button type="submit" class="modal-btn modal-btn-primary">Создать</button>
+                <button type="button" class="btn btn-secondary" onclick="closeModal('createStickerPackModal')">Cancel</button>
+                <button type="submit" class="btn btn-login">Create Stickerpack</button>
             </div>
         </form>
     </div>

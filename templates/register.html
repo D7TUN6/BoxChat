@@ -1,31 +1,46 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Регистрация</title>
-    <style>
-        body { font-family: sans-serif; background: #222; color: #fff; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
-        form { background: #333; padding: 2rem; border-radius: 8px; width: 300px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
-        input { width: 100%; padding: 10px; margin: 10px 0; border: none; border-radius: 4px; box-sizing: border-box;}
-        button { width: 100%; padding: 10px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; }
-        button:hover { background: #218838; }
-        a { color: #aaa; text-decoration: none; font-size: 0.9em; }
-        .alert { color: #ff6b6b; margin-bottom: 10px; }
-    </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BoxChat - Register</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
-    <form method="POST">
-        <h2>Регистрация</h2>
-        {% with messages = get_flashed_messages() %}
-            {% if messages %}
-                <div class="alert">{{ messages[0] }}</div>
-            {% endif %}
-        {% endwith %}
-        <input type="text" name="username" placeholder="Придумайте ник" required>
-        <input type="password" name="password" placeholder="Придумайте пароль" required>
-        <button type="submit">Зарегистрироваться</button>
-        <p style="text-align: center; margin-top: 15px;">
-            <a href="{{ url_for('login') }}">Уже есть аккаунт? Войти</a>
-        </p>
-    </form>
+    <div class="login-container">
+        <div class="login-left">
+            <div class="welcome-text">Join BoxChat</div>
+        </div>
+        <div class="login-right">
+            <div class="login-box">
+                <h1 class="login-header">Create Account</h1>
+                
+                {% with messages = get_flashed_messages() %}
+                    {% if messages %}
+                        <div style="padding: 12px; background: rgba(255, 138, 128, 0.15); border-left: 4px solid var(--danger); color: var(--danger); border-radius: var(--radius-sm); margin-bottom: 20px; font-size: 0.9rem;">
+                            {{ messages[0] }}
+                        </div>
+                    {% endif %}
+                {% endwith %}
+                
+                <form method="POST">
+                    <div class="input-group">
+                        <label class="input-label">Username</label>
+                        <input type="text" name="username" class="custom-input" placeholder="Choose a username" required>
+                    </div>
+                    <div class="input-group">
+                        <label class="input-label">Password</label>
+                        <input type="password" name="password" class="custom-input" placeholder="Create a password" required>
+                    </div>
+                    
+                    <button type="submit" class="btn btn-login" style="width: 100%; margin-top: 1.5rem;">Register</button>
+                </form>
+                
+                <p style="text-align: center; margin-top: 1.5rem; color: var(--text-muted); font-size: 0.9rem;">
+                    Already have an account? <a href="{{ url_for('auth.login') }}" style="color: var(--primary); text-decoration: none; font-weight: 600;">Sign in</a>
+                </p>
+            </div>
+        </div>
+    </div>
 </body>
 </html>

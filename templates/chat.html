@@ -3,7 +3,7 @@
 <head>
     <title>Чат с друзьями</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script src="/static/js/socket.io.js"></script>
     <style>
         body { font-family: sans-serif; background: #222; color: #ddd; margin: 0; display: flex; flex-direction: column; height: 100vh; }
         
@@ -31,7 +31,7 @@
 
 <header>
     <span>Чат: <b>{{ username }}</b></span>
-    <a href="{{ url_for('logout') }}" class="logout-btn">Выйти</a>
+    <a href="{{ url_for('auth.logout') }}" class="logout-btn">Выйти</a>
 </header>
 
 <div id="messages">

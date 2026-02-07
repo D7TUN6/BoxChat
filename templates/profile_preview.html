@@ -1,28 +1,34 @@
-<div style="position: relative;">
-    <button onclick="this.parentElement.parentElement.style.display='none';" style="position: absolute; top: 5px; right: 5px; background: #d9534f; border: none; border-radius: 50%; width: 25px; height: 25px; cursor: pointer; color: white;">×</button>
+<div style="position: relative; padding: 20px; background: var(--bg-surface); border-radius: var(--radius-lg); border: 1px solid var(--border); min-width: 320px; max-width: 380px;">
+    <button onclick="this.parentElement.parentElement.style.display='none';" style="position: absolute; top: 12px; right: 12px; background: var(--danger); border: none; border-radius: 50%; width: 28px; height: 28px; cursor: pointer; color: white; font-size: 1.2rem; font-weight: 700;">×</button>
     
-    <div style="text-align: center; margin-bottom: 15px;">
-        <img src="{{ profile_user.avatar_url }}" style="width: 100px; height: 100px; border-radius: 50%; object-fit: cover;">
-        <h3 style="margin: 10px 0 5px 0;">{{ profile_user.username }}</h3>
+    <div style="text-align: center; margin-bottom: 18px;">
+        {% if profile_user.avatar_url and profile_user.avatar_url != "https://via.placeholder.com/50" %}
+        <img src="{{ profile_user.avatar_url }}" style="width: 100px; height: 100px; border-radius: 50%; object-fit: cover; border: 3px solid var(--primary); margin-bottom: 12px;">
+        {% else %}
+        <div style="width: 100px; height: 100px; border-radius: 50%; background: var(--bg-panel); display: flex; align-items: center; justify-content: center; margin: 0 auto 12px; border: 3px solid var(--primary);">
+            <span class="material-icons-round" style="font-size: 56px; color: var(--text-muted);">person</span>
+        </div>
+        {% endif %}
+        <h3 style="margin: 0 0 4px; font-size: 1.1rem; font-weight: 700; color: var(--text-main);">{{ profile_user.username }}</h3>
         {% if profile_user.bio %}
-        <p style="color: #aaa; font-size: 0.9em; margin: 0;">{{ profile_user.bio }}</p>
+        <p style="color: var(--text-muted); font-size: 0.9rem; margin: 6px 0 0;">{{ profile_user.bio }}</p>
         {% endif %}
     </div>
     
     {% if profile_user.music_tracks %}
-    <div style="border-top: 1px solid #444; padding-top: 15px; margin-top: 15px;">
-        <h4 style="margin-top: 0; font-size: 0.9em; color: #72767d;">Музыкальная библиотека</h4>
-        <div style="max-height: 200px; overflow-y: auto;">
+    <div style="border-top: 1px solid var(--border); padding-top: 14px; margin-top: 14px;">
+        <h4 style="margin: 0 0 10px; font-size: 0.85rem; text-transform: uppercase; color: var(--text-muted); font-weight: 700; letter-spacing: 0.5px;">Music Library</h4>
+        <div style="max-height: 200px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px;">
             {% for music in profile_user.music_tracks %}
-            <div style="background: #36393f; padding: 10px; margin: 5px 0; border-radius: 5px; display: flex; align-items: center; gap: 10px;">
+            <div style="background: var(--bg-panel); padding: 10px; border-radius: var(--radius-sm); display: flex; align-items: center; gap: 8px; border: 1px solid var(--border);">
                 {% if music.cover_url %}
-                <img src="{{ music.cover_url }}" style="width: 40px; height: 40px; object-fit: cover; border-radius: 5px;">
+                <img src="{{ music.cover_url }}" style="width: 40px; height: 40px; object-fit: cover; border-radius: var(--radius-sm); flex-shrink: 0;">
                 {% endif %}
                 <div style="flex: 1; min-width: 0;">
-                    <div style="font-weight: bold; font-size: 0.9em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ music.title }}</div>
-                    <div style="font-size: 0.8em; color: #aaa; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ music.artist }}</div>
+                    <div style="font-weight: 600; font-size: 0.85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-main);">{{ music.title }}</div>
+                    <div style="font-size: 0.75rem; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ music.artist }}</div>
                 </div>
-                <audio controls style="height: 25px; width: 150px;">
+                <audio controls style="height: 24px; width: 130px; flex-shrink: 0;">
                     <source src="{{ music.file_url }}" type="audio/mpeg">
                 </audio>
             </div>
@@ -32,8 +38,8 @@
     {% endif %}
     
     {% if profile_user.id != current_user.id %}
-    <div style="margin-top: 15px; text-align: center;">
-        <a href="{{ url_for('start_dm', user_id=profile_user.id) }}" class="btn" style="display: inline-block;">Написать сообщение</a>
+    <div style="margin-top: 16px; text-align: center;">
+        <a href="{{ url_for('main.start_dm', user_id=profile_user.id) }}" class="btn btn-login" style="display: inline-block; width: 100%; text-align: center; text-decoration: none;">Message User</a>
     </div>
     {% endif %}
 </div>

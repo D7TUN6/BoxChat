@@ -1,66 +1,378 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="main" style="padding: 40px; align-items: center;">
-    <form method="POST" enctype="multipart/form-data" style="background: #2f3136; padding: 30px; border-radius: 10px; width: 500px;">
-        <h2>Настройки профиля</h2>
-        
-        <div style="margin-bottom: 20px; text-align: center;">
-            <img src="{{ user.avatar_url }}" id="avatarPreview" style="width: 100px; height: 100px; border-radius: 50%; object-fit: cover; margin-bottom: 10px; cursor: pointer;" onclick="document.getElementById('avatar_file').click();">
-            <br>
-            <input type="file" name="avatar_file" id="avatar_file" accept="image/*" style="display: none;" onchange="previewAvatar(this);">
-            <button type="button" class="btn" onclick="document.getElementById('avatar_file').click();" style="font-size: 0.9em;">Загрузить аватар</button>
-            {% if user.avatar_url and user.avatar_url != "https://via.placeholder.com/50" %}
-            <button type="button" class="btn btn-red" onclick="deleteAvatar();" style="font-size: 0.9em; margin-left: 10px;">Удалить аватар</button>
-            {% endif %}
-        </div>
-        
-        
-        <label>О себе (Bio):</label>
-        <textarea name="bio" class="input-box" style="margin-bottom: 15px; height: 80px;">{{ user.bio }}</textarea>
-        
-        <h3>Конфиденциальность</h3>
-        <label style="display: block; margin-bottom: 10px;">
-            <input type="checkbox" name="privacy_searchable" {% if user.privacy_searchable %}checked{% endif %}>
-            Разрешить искать меня в поиске
-        </label>
-        <label style="display: block; margin-bottom: 20px;">
-            <input type="checkbox" name="privacy_listable" {% if user.privacy_listable %}checked{% endif %}>
-            Показывать меня в списке участников
-        </label>
-        
-        <h3>Музыкальная библиотека</h3>
-        <div id="musicList" style="margin-bottom: 20px;">
-            {% for music in user.music_tracks %}
-            <div style="background: #36393f; padding: 10px; margin: 5px 0; border-radius: 5px; display: flex; align-items: center; gap: 10px;">
-                {% if music.cover_url %}
-                <img src="{{ music.cover_url }}" style="width: 50px; height: 50px; object-fit: cover; border-radius: 5px;">
-                {% endif %}
-                <div style="flex: 1;">
-                    <div style="font-weight: bold;">{{ music.title }}</div>
-                    <div style="font-size: 0.9em; color: #aaa;">{{ music.artist }}</div>
+<style>
+    .settings-wrapper {
+        display: flex;
+        flex-direction: column;
+        flex: 1;
+        overflow-y: auto;
+        background-color: var(--bg-surface);
+    }
+
+    .settings-container {
+        display: flex;
+        flex-direction: column;
+        padding: 40px;
+        max-width: 900px;
+        margin: 0 auto;
+        width: 100%;
+    }
+
+    .settings-section {
+        background: var(--bg-panel);
+        padding: 24px;
+        border-radius: var(--radius-md);
+        margin-bottom: 24px;
+        border: 1px solid var(--border);
+    }
+
+    .section-title {
+        font-size: 1.3rem;
+        font-weight: 700;
+        color: var(--text-main);
+        margin-bottom: 20px;
+        border-bottom: 2px solid var(--primary);
+        padding-bottom: 12px;
+    }
+
+    .section-subtitle {
+        font-size: 1.05rem;
+        font-weight: 600;
+        color: var(--text-main);
+        margin-top: 20px;
+        margin-bottom: 14px;
+    }
+
+    .profile-avatar-area {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        margin-bottom: 24px;
+    }
+
+    .profile-avatar {
+        width: 140px;
+        height: 140px;
+        border-radius: 50%;
+        object-fit: cover;
+        margin-bottom: 16px;
+        border: 4px solid var(--primary);
+        cursor: pointer;
+        transition: 0.2s;
+    }
+
+    .profile-avatar:hover {
+        transform: scale(1.05);
+        border-color: var(--primary-hover);
+    }
+
+    .button-group {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        justify-content: center;
+    }
+    
+    .button-group .btn {
+        flex: 1;
+        min-width: 150px;
+    }
+
+    .input-group {
+        margin-bottom: 16px;
+    }
+
+    .input-label {
+        display: block;
+        margin-bottom: 6px;
+        color: var(--text-muted);
+        font-size: 0.9rem;
+        font-weight: 500;
+    }
+
+    .custom-input,
+    textarea {
+        width: 100%;
+        padding: 12px 14px;
+        background-color: var(--bg-dark);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        color: var(--text-main);
+        font-size: 0.95rem;
+        transition: 0.2s;
+    }
+
+    .custom-input:focus,
+    textarea:focus {
+        outline: none;
+        border-color: var(--primary);
+        box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.15);
+    }
+
+    textarea {
+        resize: vertical;
+        min-height: 100px;
+        font-family: inherit;
+        line-height: 1.4;
+    }
+
+    .checkbox-group {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        margin: 16px 0;
+    }
+
+    .checkbox-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        cursor: pointer;
+        padding: 10px;
+        border-radius: var(--radius-sm);
+        transition: 0.15s;
+    }
+
+    .checkbox-item:hover {
+        background-color: var(--bg-surface);
+    }
+
+    .checkbox-item input[type="checkbox"] {
+        width: 18px;
+        height: 18px;
+        cursor: pointer;
+    }
+
+    .checkbox-item label {
+        cursor: pointer;
+        flex: 1;
+    }
+
+    .button-row {
+        display: flex;
+        gap: 12px;
+        margin-top: 20px;
+        flex-wrap: wrap;
+    }
+
+    .btn {
+        padding: 12px 20px;
+        border: none;
+        border-radius: var(--radius-sm);
+        font-size: 0.95rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: 0.2s;
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .btn-primary {
+        background-color: var(--primary);
+        color: var(--bg-dark);
+    }
+
+    .btn-primary:hover {
+        background-color: var(--primary-hover);
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(167, 139, 250, 0.4);
+    }
+
+    .btn-danger {
+        background-color: var(--danger);
+        color: white;
+    }
+
+    .btn-danger:hover {
+        opacity: 0.9;
+        transform: translateY(-2px);
+    }
+
+    .music-item {
+        display: grid;
+        grid-template-columns: 56px 1fr auto auto;
+        align-items: center;
+        gap: 12px;
+        background: var(--bg-dark);
+        padding: 12px;
+        border-radius: var(--radius-sm);
+        margin-bottom: 10px;
+        border: 1px solid var(--border);
+    }
+
+    .music-cover {
+        width: 56px;
+        height: 56px;
+        object-fit: cover;
+        border-radius: var(--radius-sm);
+    }
+
+    .music-info {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        min-width: 0;
+    }
+
+    .music-title {
+        font-weight: 600;
+        color: var(--text-main);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .music-artist {
+        font-size: 0.85rem;
+        color: var(--text-muted);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .music-controls {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+    }
+
+    .music-controls audio {
+        width: 160px;
+        height: 28px;
+    }
+
+    .form-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+    }
+
+    @media (max-width: 768px) {
+        .form-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .music-item {
+            grid-template-columns: 1fr;
+        }
+
+        .music-controls {
+            flex-direction: column;
+        }
+
+        .music-controls audio {
+            width: 100%;
+        }
+    }
+</style>
+
+<div class="chat-area" style="grid-column: 2 / 4 !important;">
+<div class="settings-wrapper">
+<div class="settings-container">
+    <h1 style="font-size: 2.2rem; font-weight: 700; color: var(--text-main); margin-bottom: 32px;">Settings</h1>
+
+    <!-- Profile Section -->
+    <div class="settings-section">
+        <h2 class="section-title">👤 Profile</h2>
+        <form method="POST" enctype="multipart/form-data">
+            <div class="profile-avatar-area">
+                {% if user.avatar_url and user.avatar_url != "https://via.placeholder.com/50" %}
+                <img src="{{ user.avatar_url }}" id="avatarPreview" class="profile-avatar" onclick="document.getElementById('avatar_file').click();">
+                {% else %}
+                <div style="width: 120px; height: 120px; border-radius: 50%; background: var(--bg-panel); display: flex; align-items: center; justify-content: center; margin: 0 auto 16px; border: 2px solid var(--primary); cursor: pointer;" onclick="document.getElementById('avatar_file').click();" id="avatarPreview">
+                    <span class="material-icons-round" style="font-size: 64px; color: var(--text-muted);">person</span>
                 </div>
-                <audio controls style="height: 30px; width: 200px;">
-                    <source src="{{ music.file_url }}" type="audio/mpeg">
-                </audio>
-                <button type="button" class="btn btn-red" onclick="deleteMusic({{ music.id }})" style="padding: 5px 10px; font-size: 0.8em;">Удалить</button>
+                {% endif %}
+                <input type="file" name="avatar_file" id="avatar_file" accept="image/*" style="display: none;" onchange="previewAvatar(this);">
+                <div class="button-group">
+                    <button type="button" class="btn btn-primary" onclick="document.getElementById('avatar_file').click();">📤 Upload Avatar</button>
+                    {% if user.avatar_url and user.avatar_url != "https://via.placeholder.com/50" %}
+                    <button type="button" class="btn btn-danger" onclick="deleteAvatar();">🗑️ Delete Avatar</button>
+                    {% endif %}
+                </div>
+            </div>
+
+            <div class="input-group">
+                <label class="input-label">Bio</label>
+                <textarea name="bio" class="custom-input" placeholder="Tell us about yourself...">{{ user.bio }}</textarea>
+            </div>
+
+            <div class="section-subtitle">Privacy Settings</div>
+            <div class="checkbox-group">
+                <label class="checkbox-item">
+                    <input type="checkbox" name="privacy_searchable" {% if user.privacy_searchable %}checked{% endif %}>
+                    <label>Allow others to find me in search</label>
+                </label>
+                <label class="checkbox-item">
+                    <input type="checkbox" name="privacy_listable" {% if user.privacy_listable %}checked{% endif %}>
+                    <label>Show me in member lists</label>
+                </label>
+            </div>
+
+            <div class="button-row">
+                <button type="submit" class="btn btn-primary">💾 Save Changes</button>
+                <button type="button" class="btn btn-danger" onclick="deleteAccount();">🗑️ Delete Account</button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Music Library Section -->
+    <div class="settings-section">
+        <h2 class="section-title">🎵 Music Library</h2>
+
+        {% if user.music_tracks %}
+        <div style="margin-bottom: 24px;">
+            {% for music in user.music_tracks %}
+            <div class="music-item">
+                {% if music.cover_url %}
+                <img src="{{ music.cover_url }}" class="music-cover">
+                {% else %}
+                <div style="width: 56px; height: 56px; background: var(--bg-surface); border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center; font-size: 1.5rem;">🎵</div>
+                {% endif %}
+                <div class="music-info">
+                    <div class="music-title">{{ music.title }}</div>
+                    <div class="music-artist">{{ music.artist }}</div>
+                </div>
+                <div class="music-controls">
+                    <audio controls>
+                        <source src="{{ music.file_url }}" type="audio/mpeg">
+                    </audio>
+                </div>
+                <button type="button" class="btn btn-danger" onclick="deleteMusic({{ music.id }})">🗑️</button>
             </div>
             {% endfor %}
         </div>
-        
-        <div style="background: #36393f; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
-            <h4 style="margin-top: 0;">Добавить музыку</h4>
-            <input type="file" id="music_file" accept="audio/*" style="margin-bottom: 10px; width: 100%;">
-            <input type="text" id="music_title" placeholder="Название" class="input-box" style="margin-bottom: 10px;">
-            <input type="text" id="music_artist" placeholder="Исполнитель" class="input-box" style="margin-bottom: 10px;">
-            <input type="file" id="music_cover" accept="image/*" style="margin-bottom: 10px; width: 100%;">
-            <button type="button" class="btn" onclick="addMusic()">Добавить</button>
+        {% else %}
+        <div style="text-align: center; color: var(--text-muted); padding: 24px; background: var(--bg-dark); border-radius: var(--radius-sm); margin-bottom: 24px;">
+            No music tracks yet. Add one below!
         </div>
-        
-        <div style="display: flex; gap: 10px; margin-top: 20px;">
-            <button type="submit" class="btn">Сохранить</button>
-            <button type="button" class="btn btn-red" onclick="deleteAccount()" style="background: #d83c3e;">Удалить аккаунт</button>
+        {% endif %}
+
+        <div style="background: var(--bg-dark); padding: 20px; border-radius: var(--radius-md); border: 1px solid var(--border);">
+            <h3 class="section-subtitle" style="margin-top: 0;">Add New Music</h3>
+            <div class="form-grid">
+                <div class="input-group">
+                    <label class="input-label">Music File</label>
+                    <input type="file" id="music_file" accept="audio/*" class="custom-input">
+                </div>
+                <div class="input-group">
+                    <label class="input-label">Title</label>
+                    <input type="text" id="music_title" placeholder="Song title" class="custom-input">
+                </div>
+                <div class="input-group">
+                    <label class="input-label">Artist</label>
+                    <input type="text" id="music_artist" placeholder="Artist name" class="custom-input">
+                </div>
+                <div class="input-group">
+                    <label class="input-label">Cover Image</label>
+                    <input type="file" id="music_cover" accept="image/*" class="custom-input">
+                </div>
+            </div>
+            <button type="button" class="btn btn-primary" onclick="addMusic()">➕ Add Music</button>
         </div>
-    </form>
+    </div>
 </div>
 
 <script>
@@ -79,21 +391,20 @@ function addMusic() {
     const titleInput = document.getElementById('music_title');
     const artistInput = document.getElementById('music_artist');
     const coverInput = document.getElementById('music_cover');
-    
+
     if (!fileInput.files[0]) {
-        // Используем простой prompt вместо alert для совместимости
-        if (!confirm('Выберите файл музыки')) return;
+        alert('Please select a music file');
         return;
     }
-    
+
     const formData = new FormData();
     formData.append('music_file', fileInput.files[0]);
-    formData.append('title', titleInput.value || 'Без названия');
-    formData.append('artist', artistInput.value || 'Неизвестный исполнитель');
+    formData.append('title', titleInput.value || 'Untitled');
+    formData.append('artist', artistInput.value || 'Unknown Artist');
     if (coverInput.files[0]) {
         formData.append('cover_file', coverInput.files[0]);
     }
-    
+
     fetch('/music/add', {
         method: 'POST',
         body: formData
@@ -103,15 +414,14 @@ function addMusic() {
         if (data.success) {
             location.reload();
         } else {
-            // Используем простой alert для совместимости
-            alert('Ошибка: ' + (data.error || 'Неизвестная ошибка'));
+            alert('Error: ' + (data.error || 'Unknown error'));
         }
     });
 }
 
 function deleteMusic(musicId) {
-    if (!confirm('Удалить эту композицию?')) return;
-    
+    if (!confirm('Delete this music track?')) return;
+
     fetch(`/music/${musicId}/delete`, { method: 'POST' })
     .then(r => r.json())
     .then(data => {
@@ -122,27 +432,27 @@ function deleteMusic(musicId) {
 }
 
 function deleteAvatar() {
-    if (!confirm('Удалить аватар?')) return;
-    
+    if (!confirm('Delete your avatar?')) return;
+
     fetch('/user/avatar/delete', { method: 'POST' })
     .then(r => r.json())
     .then(data => {
         if (data.success) {
             location.reload();
         } else {
-            alert('Ошибка: ' + (data.error || 'Неизвестная ошибка'));
+            alert('Error: ' + (data.error || 'Unknown error'));
         }
     });
 }
 
 function deleteAccount() {
-    const password = prompt('Введите ваш пароль для подтверждения удаления аккаунта:');
+    const password = prompt('Enter your password to confirm account deletion:');
     if (!password) return;
-    
-    if (!confirm('ВНИМАНИЕ! Удаление аккаунта необратимо!\n\nВсе ваши данные будут удалены:\n- Профиль\n- Сообщения\n- Файлы\n- Музыка\n- Стикеры\n\nВы уверены, что хотите удалить аккаунт?')) {
+
+    if (!confirm('WARNING! Account deletion is IRREVERSIBLE!\n\nAll your data will be deleted:\n- Profile\n- Messages\n- Files\n- Music\n- Stickers\n\nAre you sure you want to delete your account?')) {
         return;
     }
-    
+
     fetch('/user/delete', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
@@ -151,12 +461,16 @@ function deleteAccount() {
     .then(r => r.json())
     .then(data => {
         if (data.success) {
-            alert('Аккаунт удален. Вы будете перенаправлены на страницу входа.');
+            alert('Account deleted. You will be redirected to the login page.');
             window.location.href = '/login';
         } else {
-            alert('Ошибка: ' + (data.error || 'Неизвестная ошибка'));
+            alert('Error: ' + (data.error || 'Unknown error'));
         }
     });
 }
 </script>
+</div>
+</div>
+</div>
+</div>
 {% endblock %}

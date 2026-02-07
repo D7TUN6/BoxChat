@@ -1,82 +1,101 @@
 {% extends "base.html" %}
 {% block content %}
 <style>
-    .context-menu {
-        position: fixed;
-        background: #18191c;
-        border-radius: 4px;
-        padding: 4px;
-        min-width: 200px;
-        box-shadow: 0 8px 16px rgba(0,0,0,0.24);
-        z-index: 10004;
-        display: none;
-    }
-    .context-menu-item {
-        padding: 8px 12px;
-        color: #b9bbbe;
-        cursor: pointer;
-        border-radius: 2px;
-        font-size: 0.9em;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-    }
-    .context-menu-item:hover {
-        background: #5865f2;
-        color: white;
-    }
-    .context-menu-item.danger:hover {
-        background: #d83c3e;
-    }
     .unread-badge {
-        background: #f04747;
+        background: var(--danger);
         color: white;
-        border-radius: 10px;
+        border-radius: 12px;
         padding: 2px 6px;
-        font-size: 0.75em;
-        min-width: 18px;
+        font-size: 0.75rem;
+        min-width: 20px;
         text-align: center;
+        font-weight: 700;
+    }
+    .dm-item, .server-item {
+        display: flex !important;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 12px;
+        border-radius: var(--radius-sm);
+        margin: 3px 8px;
+        cursor: pointer;
+        transition: 0.15s;
+    }
+    .dm-item:hover, .server-item:hover { background-color: var(--bg-surface); }
+    .dm-item.active, .server-item.active { background-color: var(--bg-surface); }
+    
+    /* Mobile responsive - dashboard takes full width */
+    @media (max-width: 480px) {
+        .chat-area {
+            grid-column: 1 / 2 !important;
+        }
     }
 </style>
-<div class="panel" style="width: 100%;">
-    <div class="panel-header">Личные сообщения</div>
-    <div class="channel-list" id="dmList">
-        {% for dm_info in dms %}
-            <div class="dm-item-wrapper" style="position: relative;">
-                <a href="{{ url_for('view_room', room_id=dm_info.room.id) }}" class="channel-item dm-item" data-room-id="{{ dm_info.room.id }}" style="display: flex; align-items: center; gap: 10px; position: relative;">
-                    {% if dm_info.other_user %}
-                        <img src="{{ dm_info.other_user.avatar_url }}" style="width: 30px; height: 30px; border-radius: 50%; object-fit: cover;">
-                        <span style="flex: 1;">{{ dm_info.other_user.username }}</span>
-                        {% if dm_info.unread_count > 0 %}
-                            <span class="unread-badge" style="background: #f04747; color: white; border-radius: 10px; padding: 2px 6px; font-size: 0.75em; min-width: 18px; text-align: center;">{{ dm_info.unread_count }}</span>
+
+<div class="chat-area dashboard-content" style="display: flex; flex-direction: column; grid-column: 1 / 2 !important;">
+    <div style="padding: 20px 12px; border-bottom: 1px solid var(--border); background-color: var(--bg-panel);">
+        <h2 style="margin-bottom: 5px;">Welcome!</h2>
+        <p style="color: var(--text-muted); font-size: 0.9rem;">Select a server or start a conversation</p>
+    </div>
+    <div style="padding: 15px 8px; flex: 1; overflow-y: auto;">
+        <div style="padding: 15px;">
+        <!-- Direct Messages -->
+        <div style="margin-top: 12px; margin-bottom: 16px;">
+            <div class="channel-section-title">Direct Messages</div>
+            <div id="dmList">
+                {% for dm_info in dms %}
+                    <a href="{{ url_for('main.view_room', room_id=dm_info.room.id) }}" class="dm-item" data-room-id="{{ dm_info.room.id }}" style="border-bottom: 1px solid var(--border);">
+                        {% if dm_info.other_user %}
+                            {% if dm_info.other_user.avatar_url and dm_info.other_user.avatar_url != "https://via.placeholder.com/50" %}
+                                <img src="{{ dm_info.other_user.avatar_url }}" style="width: 36px; height: 36px; border-radius: 50%; object-fit: cover; flex-shrink: 0; border: 1px solid var(--border);">
+                            {% else %}
+                                <div style="width: 36px; height: 36px; border-radius: 50%; background: var(--bg-panel); display: flex; align-items: center; justify-content: center; flex-shrink: 0; border: 1px solid var(--border);">
+                                    <span class="material-icons-round" style="font-size: 20px; color: var(--text-muted);">person</span>
+                                </div>
+                            {% endif %}
+                            <div style="flex: 1; min-width: 0;">
+                                <div style="font-weight: 600; font-size: 0.95rem;">{{ dm_info.other_user.username }}</div>
+                            </div>
+                            {% if dm_info.unread_count > 0 %}
+                                <span class="unread-badge">{{ dm_info.unread_count }}</span>
+                            {% endif %}
+                        {% else %}
+                            <span style="color: var(--text-muted);">Unknown user</span>
                         {% endif %}
-                    {% else %}
-                        <span>Неизвестный пользователь</span>
-                    {% endif %}
-                </a>
+                    </a>
+                {% endfor %}
             </div>
-        {% endfor %}
+        </div>
+        
+        <!-- Servers/Rooms -->
+        <div style="margin-top: 16px; margin-bottom: 16px;">
+            <div class="channel-section-title">Servers</div>
+            <div>
+                {% for server_info in servers %}
+                    <a href="{{ url_for('main.view_room', room_id=server_info.room.id) }}" class="server-item" data-room-id="{{ server_info.room.id }}" data-role="{{ server_info.role }}" style="border-bottom: 1px solid var(--border);">
+                        {% if server_info.room.avatar_url %}
+                            <img src="{{ server_info.room.avatar_url }}" style="width: 36px; height: 36px; border-radius: 50%; object-fit: cover; flex-shrink: 0; border: 1px solid var(--border);">
+                        {% else %}
+                            <div style="width: 36px; height: 36px; border-radius: 50%; background: var(--bg-panel); display: flex; align-items: center; justify-content: center; font-size: 0.85rem; font-weight: 700; color: var(--text-main); flex-shrink: 0; border: 1px solid var(--border);">
+                                {% if server_info.room.name|length > 0 %}
+                                    {{ server_info.room.name[:2] }}
+                                {% else %}
+                                    <span class="material-icons-round" style="font-size: 20px;">public</span>
+                                {% endif %}
+                            </div>
+                        {% endif %}
+                        <div style="flex: 1; min-width: 0;">
+                            <div style="font-weight: 600; font-size: 0.95rem;">{{ server_info.room.name }}</div>
+                        </div>
+                    </a>
+                {% endfor %}
+            </div>
+        </div>
     </div>
     
-    <div class="panel-header" style="border-top: 1px solid #202225; margin-top: 20px;">Серверы</div>
-    <div class="channel-list">
-        {% for server_info in servers %}
-            <div class="server-item-wrapper" style="position: relative;">
-                <a href="{{ url_for('view_room', room_id=server_info.room.id) }}" class="channel-item server-item" data-room-id="{{ server_info.room.id }}" data-role="{{ server_info.role }}" style="display: flex; align-items: center; gap: 10px;">
-                    {% if server_info.room.avatar_url %}
-                        <img src="{{ server_info.room.avatar_url }}" style="width: 30px; height: 30px; border-radius: 50%; object-fit: cover;">
-                    {% else %}
-                        <div style="width: 30px; height: 30px; border-radius: 50%; background: #36393f; display: flex; align-items: center; justify-content: center; font-size: 0.8em;">{{ server_info.room.name[:2] }}</div>
-                    {% endif %}
-                    <span>{{ server_info.room.name }}</span>
-                </a>
-            </div>
-        {% endfor %}
-    </div>
-    
-    <!-- Контекстное меню для ЛС -->
+    <!-- Context Menu for DMs -->
     <div id="dmContextMenu" class="context-menu" style="display: none;">
-        <div class="context-menu-item danger" onclick="deleteDM()">Удалить переписку</div>
+        <div class="context-menu-item danger" onclick="deleteDM()">Delete conversation</div>
     </div>
     
     <!-- Контекстное меню для сервера -->
@@ -110,9 +129,11 @@ document.addEventListener('DOMContentLoaded', function() {
             // Показываем/скрываем пункты меню в зависимости от роли
             const canInvite = contextMenuServerRole === 'owner' || contextMenuServerRole === 'admin';
             const canDelete = contextMenuServerRole === 'owner' || contextMenuServerRole === 'admin';
-            menu.querySelectorAll('.context-menu-item')[0].style.display = canInvite ? 'flex' : 'none'; // Пригласить
-            menu.querySelectorAll('.context-menu-item')[2].style.display = canDelete ? 'flex' : 'none'; // Удалить
-            menu.querySelectorAll('.context-menu-item')[3].style.display = contextMenuServerRole !== 'owner' ? 'flex' : 'none'; // Покинуть
+            const items = menu.querySelectorAll('.context-menu-item');
+            if (items[0]) items[0].style.display = canInvite ? 'flex' : 'none'; // Пригласить
+            // items[1] => Удалить, items[2] => Покинуть
+            if (items[1]) items[1].style.display = canDelete ? 'flex' : 'none'; // Удалить (only owners/admins)
+            if (items[2]) items[2].style.display = contextMenuServerRole !== 'owner' ? 'flex' : 'none'; // Покинуть (hide for owner)
         });
     });
     
@@ -143,7 +164,7 @@ function deleteServer() {
         .then(r => r.json())
         .then(data => {
             if (data.success) {
-                location.reload();
+                window.location.href = "{{ url_for('main.dashboard') }}";
             } else {
                 showAlert('Ошибка: ' + (data.error || 'Неизвестная ошибка'));
             }
@@ -159,7 +180,7 @@ function leaveServer() {
         .then(r => r.json())
         .then(data => {
             if (data.success) {
-                location.reload();
+                window.location.href = "{{ url_for('main.dashboard') }}";
             } else {
                 showAlert('Ошибка: ' + (data.error || 'Неизвестная ошибка'));
             }
@@ -227,7 +248,7 @@ function showConfirm(title, message, onConfirm) {
 }
 </script>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+<script src="/static/js/socket.io.js"></script>
 <script>
 // Подключаемся к Socket.IO для обновления списка ЛС в реальном времени
 const socket = io();
@@ -270,6 +291,11 @@ socket.on('new_dm_message', function(data) {
     }
 });
 </script>
-    
+        </div>
+    </div>
 </div>
+<script>
+    // Добавляем класс, чтобы CSS знал, что мы на главной
+    document.body.classList.add('is-dashboard');
+</script>
 {% endblock %}

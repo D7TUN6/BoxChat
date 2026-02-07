@@ -1,0 +1,24 @@
+{
+  "SQLALCHEMY_DATABASE_URI": "sqlite:///thecomboxmsgr.db",
+  "SQLALCHEMY_TRACK_MODIFICATIONS": false,
+  "SECRET_KEY": "super_secret_key_v2",
+  "UPLOAD_FOLDER": "uploads",
+  "MAX_CONTENT_LENGTH": 52428800,
+  "ALLOWED_EXTENSIONS": [
+    "png", "jpg", "jpeg", "gif", "webp",
+    "mp3", "ogg", "flac", "wav",
+    "mp4", "webm", "mov", "avi", "mkv",
+    "txt", "py", "js", "html", "css", "json", "xml", "md", "pdf", "zip", "rar"
+  ],
+  "IMAGE_EXTENSIONS": ["png", "jpg", "jpeg", "gif", "webp"],
+  "MUSIC_EXTENSIONS": ["mp3", "ogg", "flac", "wav"],
+  "VIDEO_EXTENSIONS": ["mp4", "webm", "mov", "avi", "mkv"],
+  "UPLOAD_SUBDIRS": {
+    "avatars": "avatars",
+    "room_avatars": "room_avatars",
+    "channel_icons": "channel_icons",
+    "files": "files",
+    "music": "music",
+    "videos": "videos"
+  }
+}

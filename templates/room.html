@@ -2,131 +2,142 @@
 {% block content %}
 
 <style>
-    .channel-item { position: relative; }
-    .channel-item:hover .channel-actions { display: flex; }
-    .channel-actions { display: none; position: absolute; right: 5px; gap: 5px; }
-    .channel-actions button { background: #d9534f; padding: 2px 6px; font-size: 0.7em; border: none; border-radius: 3px; cursor: pointer; }
-    .channel-icon { width: 20px; height: 20px; display: inline-block; vertical-align: middle; margin-right: 5px; }
-        .message-file { background: #2f3136; padding: 10px; border-radius: 5px; margin: 5px 0; display: inline-block; }
-        .message-image { max-width: 400px; max-height: 400px; border-radius: 5px; cursor: pointer; margin: 5px 0; }
-        .message-audio { width: 100%; max-width: 400px; margin: 5px 0; }
-        .file-icon { font-size: 2em; margin-right: 10px; }
-        .fullscreen-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); z-index: 10000; display: none; align-items: center; justify-content: center; cursor: pointer; }
-        .fullscreen-overlay img { max-width: 90%; max-height: 90%; }
-        .profile-preview { position: fixed; background: #2f3136; padding: 20px; border-radius: 10px; z-index: 10001; display: none; max-width: 400px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); }
-        .avatar-clickable { cursor: pointer; }
-        .file-preview-item { background: #36393f; padding: 10px; border-radius: 5px; position: relative; max-width: 200px; }
-        .file-preview-item img { max-width: 180px; max-height: 180px; border-radius: 5px; }
-        .file-preview-item .remove-btn { position: absolute; top: 5px; right: 5px; background: #d9534f; border: none; border-radius: 50%; width: 20px; height: 20px; cursor: pointer; color: white; font-size: 12px; }
-        .file-preview-item .file-name { font-size: 0.8em; color: #aaa; margin-top: 5px; word-break: break-all; }
-        .message { position: relative; display: flex; gap: 10px; align-items: flex-start; }
-        .msg-text { white-space: pre-line; word-wrap: break-word; }
-        .avatar { flex-shrink: 0; }
-        .avatar img { object-fit: cover; }
-        
-        /* Модальные окна в стиле Discord */
-        .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 10003; display: none; align-items: center; justify-content: center; }
-        .modal { background: #36393f; border-radius: 8px; padding: 20px; min-width: 400px; max-width: 500px; box-shadow: 0 8px 32px rgba(0,0,0,0.4); }
-        .modal-header { font-size: 1.2em; font-weight: bold; margin-bottom: 15px; color: #fff; }
-        .modal-body { color: #dcddde; margin-bottom: 20px; }
-        .modal-footer { display: flex; gap: 10px; justify-content: flex-end; }
-        .modal-btn { padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-weight: 500; }
-        .modal-btn-primary { background: #5865f2; color: white; }
-        .modal-btn-primary:hover { background: #4752c4; }
-        .modal-btn-danger { background: #d83c3e; color: white; }
-        .modal-btn-danger:hover { background: #c03537; }
-        .modal-btn-secondary { background: #4f545c; color: white; }
-        .modal-btn-secondary:hover { background: #5d6269; }
-        
-        /* Контекстное меню */
-        .context-menu { position: fixed; background: #18191c; border-radius: 4px; padding: 4px; min-width: 200px; box-shadow: 0 8px 16px rgba(0,0,0,0.24); z-index: 10004; display: none; }
-        .context-menu-item { padding: 8px 12px; color: #b9bbbe; cursor: pointer; border-radius: 2px; font-size: 0.9em; display: flex; align-items: center; gap: 8px; }
-        .context-menu-item:hover { background: #5865f2; color: white; }
-        .context-menu-item.danger:hover { background: #d83c3e; }
-        .context-menu-separator { height: 1px; background: #4f545c; margin: 4px 0; }
-        
-        /* Реакции */
-        .message-reactions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
-        .reaction { display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; background: #2f3136; border-radius: 12px; cursor: pointer; font-size: 0.9em; border: 1px solid transparent; }
-        .reaction:hover { background: #393c43; border-color: #5865f2; }
-        .reaction.active { background: #5865f2; border-color: #5865f2; }
-        .reaction-emoji { font-size: 1.1em; }
-        .reaction-count { color: #b9bbbe; font-size: 0.85em; }
-        .reaction.active .reaction-count { color: white; }
-        
-        /* Эмодзи пикер */
-        .emoji-picker { position: fixed; background: #2f3136; border-radius: 8px; padding: 10px; width: 300px; max-height: 300px; overflow-y: auto; box-shadow: 0 8px 16px rgba(0,0,0,0.24); z-index: 10005; display: none; }
-        .emoji-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 5px; }
-        .emoji-item { font-size: 1.5em; cursor: pointer; padding: 5px; text-align: center; border-radius: 4px; }
-        .emoji-item:hover { background: #393c43; }
-        
-        /* Стикеры */
-        .sticker-picker { position: fixed; background: #2f3136; border-radius: 8px; padding: 10px; width: 350px; max-height: 400px; overflow-y: auto; box-shadow: 0 8px 16px rgba(0,0,0,0.24); z-index: 10005; display: none; }
-        .sticker-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-        .sticker-item { cursor: pointer; border-radius: 4px; overflow: hidden; }
-        .sticker-item img { width: 100%; height: auto; display: block; }
-        .sticker-item:hover { background: #393c43; }
-        .message-sticker { max-width: 200px; max-height: 200px; cursor: pointer; }
+    .rooms-list { flex-direction: column; }
+    .channel-item { position: relative; padding: 8px 12px; border-radius: var(--radius-sm); cursor: pointer; transition: 0.15s; margin: 2px 8px; }
+    .channel-item:hover { background-color: var(--bg-surface); }
+    .channel-item.active { background-color: var(--bg-surface); color: var(--primary); }
+    /* hide legacy hover action buttons; actions are moved to context menu */
+    .channel-item:hover .channel-actions { display: none !important; }
+    .channel-actions { display: none; position: absolute; right: 8px; top: 50%; transform: translateY(-50%); gap: 4px; }
+    .channel-actions button { background: var(--danger); padding: 4px 8px; font-size: 0.75em; border: none; border-radius: var(--radius-sm); cursor: pointer; color: white; }
+    .channel-icon { width: 18px; height: 18px; display: inline-block; vertical-align: middle; margin-right: 6px; }
+    
+    .message-file { background: var(--bg-panel); padding: 12px; border-radius: var(--radius-md); margin: 8px 0; display: inline-flex; align-items: center; gap: 12px; border: 1px solid var(--border); }
+    .message-image { max-width: 400px; max-height: 400px; border-radius: var(--radius-md); cursor: pointer; margin: 8px 0; display: block; }
+    .message-audio { width: 100%; max-width: 400px; margin: 8px 0; }
+    .file-icon { font-size: 1.8em; }
+    
+    .fullscreen-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); z-index: 10000; display: none; align-items: center; justify-content: center; cursor: pointer; }
+    .fullscreen-overlay img { max-width: 90%; max-height: 90%; }
+    
+    .profile-preview { position: fixed; background: var(--bg-surface); padding: 20px; border-radius: var(--radius-lg); z-index: 10001; display: none; max-width: 380px; box-shadow: 0 4px 20px rgba(0,0,0,0.3); border: 1px solid var(--border); }
+    .avatar-clickable { cursor: pointer; }
+    
+    .file-preview-item { background: var(--bg-panel); padding: 10px; border-radius: var(--radius-md); position: relative; max-width: 180px; border: 1px solid var(--border); }
+    .file-preview-item img { max-width: 100%; height: auto; border-radius: var(--radius-sm); display: block; }
+    .file-preview-item .remove-btn { position: absolute; top: 5px; right: 5px; background: var(--danger); border: none; border-radius: 50%; width: 24px; height: 24px; cursor: pointer; color: white; font-size: 12px; }
+    .file-preview-item .file-name { font-size: 0.8em; color: var(--text-muted); margin-top: 5px; word-break: break-all; }
+    
+    .msg-text { white-space: pre-wrap; word-wrap: break-word; line-height: 1.5; }
+
+    /* Reply (quoted) block inside messages */
+    .msg-reply {
+        border-left: 3px solid rgba(0,0,0,0.08);
+        background: rgba(0,0,0,0.03);
+        padding: 8px 10px;
+        margin-bottom: 8px;
+        border-radius: 6px;
+        font-size: 0.9rem;
+        color: var(--text-muted);
+        cursor: pointer;
+        overflow: hidden;
+    }
+    .msg-reply:hover { background: rgba(0,0,0,0.05); }
+    .msg-reply .reply-author { font-weight: 700; margin-bottom: 4px; color: var(--text-main); }
+    .msg-reply .reply-snippet { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-muted); }
+    .reply-target-highlight { box-shadow: 0 0 0 3px rgba(66,133,244,0.15) inset; transition: box-shadow 0.25s ease; }
+    
+    .message-reactions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .reaction { display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; background: var(--bg-panel); border-radius: 16px; cursor: pointer; font-size: 0.9em; border: 1px solid var(--border); transition: 0.15s; }
+    .reaction:hover { background: var(--bg-surface); border-color: var(--primary); }
+    .reaction.active { background: var(--primary); border-color: var(--primary); color: var(--bg-dark); }
+    .reaction-emoji { font-size: 1em; }
+    .reaction-count { font-size: 0.85em; }
+    .reaction.active .reaction-count { color: var(--bg-dark); font-weight: 600; }
+    
+    .emoji-picker { position: fixed; background: var(--bg-surface); border-radius: var(--radius-lg); padding: 12px; width: 320px; max-height: 320px; overflow-y: auto; box-shadow: 0 8px 16px rgba(0,0,0,0.3); z-index: 10005; display: none; border: 1px solid var(--border); }
+    .emoji-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 6px; }
+    .emoji-item { font-size: 1.4em; cursor: pointer; padding: 6px; text-align: center; border-radius: var(--radius-sm); transition: 0.1s; }
+    .emoji-item:hover { background: var(--bg-panel); }
+    
+    .sticker-picker { position: fixed; background: var(--bg-surface); border-radius: var(--radius-lg); padding: 12px; width: 360px; max-height: 420px; overflow-y: auto; box-shadow: 0 8px 16px rgba(0,0,0,0.3); z-index: 10005; display: none; border: 1px solid var(--border); }
+    .sticker-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    .sticker-item { cursor: pointer; border-radius: var(--radius-md); overflow: hidden; transition: 0.15s; }
+    .sticker-item img { width: 100%; height: auto; display: block; }
+    .sticker-item:hover { transform: scale(1.05); }
+    .message-sticker { max-width: 200px; max-height: 200px; cursor: pointer; border-radius: var(--radius-md); }
+    
+    .channel-section-title { font-size: 0.75rem; text-transform: uppercase; margin: 14px 0 6px 14px; color: var(--text-muted); font-weight: 700; letter-spacing: 0.5px; }
+    .members-section { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
+    .member-item { padding: 6px 12px; font-size: 0.9rem; color: var(--text-main); overflow: hidden; text-overflow: ellipsis; }
+    .member-item.owner { color: var(--primary); font-weight: 600; }
 </style>
 
-<div class="panel">
-    <div class="panel-header">
+<div class="rooms-list">
+    <div class="rooms-header">
         {% if room.type == 'dm' %}
-            {% for m in room.members %}
-                {% if m.user_id != current_user.id %}
-                    {{ m.user.username }}
-                {% endif %}
-            {% endfor %}
+            <div style="padding: 12px 16px; font-weight: 600; font-size: 1rem;">
+                {% for m in room.members %}
+                    {% if m.user_id != current_user.id %}
+                        {{ m.user.username }}
+                    {% endif %}
+                {% endfor %}
+            </div>
         {% else %}
-            {{ room.name }}
-        {% endif %}
-        {% if member.role in ['owner', 'admin'] %}
-        <a href="{{ url_for('room_settings', room_id=room.id) }}" style="float: right; font-size: 0.8em; color: #aaa;">⚙️</a>
-        {% endif %}
-        {% if room.type != 'dm' and member.role in ['owner', 'admin'] %}
-        <button onclick="inviteToRoom({{ room.id }}); return false;" style="float: right; margin-right: 10px; background: #5865f2; border: none; color: white; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 0.8em;">Пригласить</button>
+            <div style="padding: 12px 16px; font-weight: 600; font-size: 0.95rem; color: var(--text-main);">
+                {{ room.name }}
+            </div>
+            <button id="roomsClose" class="rooms-close" title="Close channels" aria-label="Close channels" style="display:none;">✕</button>
+            {% if member.role in ['owner', 'admin'] %}
+            <div style="padding: 0 16px 12px; display: flex; gap: 8px;">
+                <button onclick="inviteToRoom({{ room.id }}); return false;" style="flex: 1; background: var(--primary); color: var(--bg-dark); border: none; padding: 8px 12px; border-radius: var(--radius-sm); cursor: pointer; font-size: 0.85em; font-weight: 600;">👥 Invite</button>
+                <a href="{{ url_for('api.room_settings', room_id=room.id) }}" style="flex: 0 0 auto; padding: 8px 12px; background: var(--bg-surface); color: var(--text-main); border: 1px solid var(--border); border-radius: var(--radius-sm); text-decoration: none; font-size: 0.85em; display: flex; align-items: center; justify-content: center;">⚙️</a>
+            </div>
+            {% endif %}
         {% endif %}
     </div>
-    <div class="channel-list">
+    <div class="rooms-scroll-area" style="padding-top: 0;">
         {% if room.type != 'dm' %}
-            <div style="font-size: 0.7em; text-transform: uppercase; margin: 10px 0 5px 10px; color: #72767d;">Каналы</div>
+            <div class="channel-section-title">Channels</div>
             {% for ch in room.channels %}
-                <div class="channel-item">
-                    <a href="{{ url_for('view_room', room_id=room.id, channel_id=ch.id) }}" 
-                       class="channel-item {% if ch.id == active_channel_id %}active{% endif %}" style="display: block; padding: 5px 10px;">
-                        {% if ch.icon_image_url %}
-                            <img src="{{ ch.icon_image_url }}" class="channel-icon">
-                        {% elif ch.icon_emoji %}
-                            <span class="channel-icon" style="font-size: 16px;">{{ ch.icon_emoji }}</span>
-                        {% endif %}
-                        # {{ ch.name }}
-                        {% if ch.description %}
-                            <div style="font-size: 0.7em; color: #72767d; margin-left: 25px;">{{ ch.description }}</div>
-                        {% endif %}
-                    </a>
+                <div class="channel-item {% if ch.id == active_channel_id %}active{% endif %}" data-channel-id="{{ ch.id }}" data-channel-name="{{ ch.name }}" data-channel-description="{{ ch.description or '' }}" data-channel-emoji="{{ ch.icon_emoji or '' }}" data-channel-icon-url="{{ ch.icon_image_url or '' }}" onclick="goToChannel({{ ch.id }}, '{{ url_for('main.view_room', room_id=room.id, channel_id='__CH__') }}'.replace('__CH__', {{ ch.id }})); return false;" oncontextmenu="showChannelContextMenu(event, {{ ch.id }}); return false;">
+                    {% if ch.icon_image_url %}
+                        <img src="{{ ch.icon_image_url }}" class="channel-icon" style="width: 16px; height: 16px; border-radius: 2px;">
+                    {% elif ch.icon_emoji %}
+                        <span class="channel-icon" style="font-size: 14px;">{{ ch.icon_emoji }}</span>
+                    {% else %}
+                        <span class="channel-icon" style="font-size: 14px;">#</span>
+                    {% endif %}
+                    <span>{{ ch.name }}</span>
                     {% if member.role in ['owner', 'admin'] %}
                     <div class="channel-actions">
-                        <button onclick="editChannel({{ ch.id }}, '{{ ch.name }}', '{{ ch.description or '' }}', '{{ ch.icon_emoji or '' }}', '{{ ch.icon_image_url or '' }}'); return false;">✏️</button>
-                        <button onclick="deleteChannel({{ ch.id }}); return false;">🗑️</button>
+                        <button onclick="event.stopPropagation(); editChannel({{ ch.id }}, '{{ ch.name }}', '{{ ch.description or '' }}', '{{ ch.icon_emoji or '' }}', '{{ ch.icon_image_url or '' }}'); return false;" style="background: transparent; border: none; color: var(--text-muted); cursor: pointer; font-size: 1.2em;" title="Edit">
+                            <span class="material-icons-round" style="font-size: 20px;">edit</span>
+                        </button>
+                        <button onclick="event.stopPropagation(); deleteChannel({{ ch.id }}); return false;" style="background: transparent; border: none; color: var(--danger); cursor: pointer; font-size: 1.2em;" title="Delete">
+                            <span class="material-icons-round" style="font-size: 20px;">delete</span>
+                        </button>
                     </div>
                     {% endif %}
                 </div>
+                {% if ch.description %}
+                    <div style="font-size: 0.75em; color: var(--text-muted); margin: 2px 20px 8px; font-weight: 400;">{{ ch.description }}</div>
+                {% endif %}
             {% endfor %}
             
             {% if member.role in ['owner', 'admin'] %}
-            <form action="{{ url_for('add_channel', room_id=room.id) }}" method="POST" style="padding: 10px;">
-                <input name="name" placeholder="+ Канал" class="input-box" style="padding: 5px; font-size: 0.9em;">
+            <form action="{{ url_for('api.add_channel', room_id=room.id) }}" method="POST" style="padding: 8px 12px; margin-top: 8px;">
+                <input name="name" placeholder="+ New channel" class="custom-input" style="padding: 8px 12px; font-size: 0.85em;">
             </form>
             {% endif %}
-            
         {% else %}
-             <div style="padding:10px;">Личная переписка</div>
+            <div style="padding: 14px; text-align: center; color: var(--text-muted); font-size: 0.9rem;">Direct message</div>
         {% endif %}
         
-        <div style="margin-top: 20px; border-top: 1px solid #444; padding-top: 10px;">
-            <div style="font-size: 0.7em; margin: 0 0 5px 10px; color: #72767d;">Участники</div>
+        <div class="members-section">
+            <div class="channel-section-title">Members</div>
             {% for m in room.members %}
-                <div style="padding: 2px 10px; font-size: 0.9em; {% if m.role=='owner' %}color: gold;{% endif %}">
+                <div class="member-item {% if m.role == 'owner' %}owner{% endif %}">
                     {{ m.user.username }}
                 </div>
             {% endfor %}
@@ -134,58 +145,162 @@
     </div>
 </div>
 
-<div class="main">
+<div class="chat-area">
     <div class="chat-header">
-        {% if room.type == 'broadcast' %}📢{% else %}#{% endif %} 
-        Чат
+        <button class="rooms-toggle" id="roomsToggle" title="Channels" aria-label="Toggle channels" style="display:none;">
+            <span class="material-icons-round">menu</span>
+        </button>
+        <span style="font-size: 1rem; font-weight: 600; display: flex; align-items: center; gap: 8px;">
+            {% if room.type == 'broadcast' %}📢{% else %}#{% endif %}
+            {% if active_channel %}
+                {{ active_channel.name }}
+            {% else %}
+                Chat
+            {% endif %}
+        </span>
+        {% if room.type != 'dm' and member.role in ['owner', 'admin'] and active_channel %}
+        <div style="display: flex; gap: 6px;">
+            <button onclick="editChannel({{ active_channel.id }}, '{{ active_channel.name }}', '{{ active_channel.description or '' }}', '{{ active_channel.icon_emoji or '' }}', '{{ active_channel.icon_image_url or '' }}'); return false;" style="background: var(--bg-surface); border: 1px solid var(--border); color: var(--text-main); padding: 6px 12px; border-radius: var(--radius-sm); cursor: pointer; display: flex; align-items: center; gap: 4px;">
+                <span class="material-icons-round" style="font-size: 20px;">edit</span>
+            </button>
+        </div>
+        {% endif %}
     </div>
     
-    <div class="messages" id="messages">
+    <div class="messages-container" id="messages">
         {% for msg in messages %}
-        <div class="message" data-msg-id="{{ msg.id }}">
+        <div class="message {% if msg.user_id == current_user.id %}sent{% else %}received{% endif %}" data-msg-id="{{ msg.id }}">
+            {% if msg.user_id != current_user.id %}
             <div class="avatar avatar-clickable" onclick="showProfile({{ msg.user.id }}, event)">
+                {% if msg.user.avatar_url and msg.user.avatar_url != "https://via.placeholder.com/50" %}
                 <img src="{{ msg.user.avatar_url }}">
-            </div>
-            <div class="msg-content">
-                <div class="msg-meta">
-                    <span style="color: white; font-weight: bold; margin-right: 5px; cursor: pointer;" onclick="showProfile({{ msg.user.id }}, event)">{{ msg.user.username }}</span> 
-                    {{ msg.timestamp.strftime('%H:%M') }}
-                    {% if msg.edited_at %}
-                    <span style="color: #72767d; font-size: 0.85em; margin-left: 5px;">(изменено)</span>
-                    {% endif %}
+                {% else %}
+                <div style="width: 100%; height: 100%; border-radius: 50%; background: var(--bg-panel); display: flex; align-items: center; justify-content: center;">
+                    <span class="material-icons-round" style="font-size: 24px; color: var(--text-muted);">person</span>
                 </div>
-                <div class="msg-text">
+                {% endif %}
+            </div>
+            {% endif %}
+            <div class="message-content">
+                {% if msg.user_id != current_user.id %}
+                <div class="msg-meta">
+                    <span class="msg-author" onclick="showProfile({{ msg.user.id }}, event)">{{ msg.user.username }}</span>
+                    <span class="msg-time" data-timestamp="{{ msg.timestamp.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span>
+                </div>
+                {% else %}
+                <div class="msg-time" data-timestamp="{{ msg.timestamp.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></div>
+                {% endif %}
+                
+                <div class="msg-bubble">
                     {% if msg.message_type == 'sticker' %}
                         <img src="{{ msg.file_url }}" class="message-sticker" onclick="showFullscreen('{{ msg.file_url }}')">
                     {% elif msg.message_type == 'image' %}
                         <img src="{{ msg.file_url }}" class="message-image" onclick="showFullscreen('{{ msg.file_url }}')">
-                        {% if msg.content %}<div>{{ msg.content }}</div>{% endif %}
-                    {% elif msg.message_type == 'music' %}
-                        <div class="message-file">
-                            <audio controls class="message-audio">
-                                <source src="{{ msg.file_url }}" type="audio/mpeg">
-                            </audio>
-                            <div style="margin-top: 5px;">
-                                <a href="{{ msg.file_url }}" download style="color: #007bff;">Скачать</a>
+                        {% if msg.reply_to %}
+                            <div class="msg-reply" data-reply-id="{{ msg.reply_to.id }}">
+                                <div class="reply-author">{{ msg.reply_to.username }}</div>
+                                <div class="reply-snippet">{{ msg.reply_to.snippet }}</div>
                             </div>
-                            {% if msg.content %}<div>{{ msg.content }}</div>{% endif %}
+                        {% endif %}
+                        {% if msg.content %}
+                            <div class="msg-text" style="margin-top: 8px;">{{ msg.content|e }}</div>
+                        {% endif %}
+                    {% elif msg.message_type == 'music' %}
+                        <div>
+                            <div class="custom-media-player" data-type="audio">
+                                <audio class="cmp-media" preload="metadata">
+                                    <source src="{{ msg.file_url }}" type="audio/mpeg">
+                                </audio>
+                                <div class="cmp-controls">
+                                    <button class="cmp-play" aria-label="Play">▶</button>
+                                    <div class="cmp-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                                        <div class="cmp-progress-filled"></div>
+                                    </div>
+                                    <div class="cmp-time">0:00 / 0:00</div>
+                                    <div class="cmp-volume-wrap">
+                                        <input type="range" class="cmp-volume" min="0" max="1" step="0.01" value="1" aria-label="Volume">
+                                    </div>
+                                </div>
+                            </div>
+                            <div style="margin-top: 6px; font-size: 0.9rem; font-weight: 500; color: var(--text-main);">
+                                {{ msg.file_name.rsplit('.', 1)[0] if msg.file_name else msg.file_url.split('/')[-1].rsplit('.', 1)[0] }}
+                            </div>
+                            <div style="margin-top: 8px; display: flex; gap: 8px; font-size: 0.9rem;">
+                                <a href="{{ msg.file_url }}" download style="color: {% if msg.user_id == current_user.id %}var(--bg-dark){% else %}var(--primary){% endif %}; font-weight: 600;">Download</a>
+                            </div>
+                            {% if msg.content %}
+                                {% if msg.reply_to %}
+                                    <div class="msg-reply" data-reply-id="{{ msg.reply_to.id }}">
+                                        <div class="reply-author">{{ msg.reply_to.username }}</div>
+                                        <div class="reply-snippet">{{ msg.reply_to.snippet }}</div>
+                                    </div>
+                                {% endif %}
+                                <div class="msg-text" style="margin-top: 8px;">{{ msg.content|e }}</div>
+                            {% endif %}
                         </div>
+                    {% elif msg.message_type == 'video' %}
+                        <div>
+                            <div class="custom-media-player video-player" data-type="video">
+                                <video class="cmp-media" preload="metadata" playsinline>
+                                    <source src="{{ msg.file_url }}" type="video/mp4">
+                                </video>
+                                <div class="cmp-controls">
+                                    <button class="cmp-play" aria-label="Play">▶</button>
+                                    <div class="cmp-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                                        <div class="cmp-progress-filled"></div>
+                                    </div>
+                                    <div class="cmp-time">0:00 / 0:00</div>
+                                    <div class="cmp-volume-wrap">
+                                        <input type="range" class="cmp-volume" min="0" max="1" step="0.01" value="1" aria-label="Volume">
+                                    </div>
+                                    <button class="cmp-fullscreen" aria-label="Fullscreen">⤢</button>
+                                </div>
+                            </div>
+                            {% if msg.content %}
+                                {% if msg.reply_to %}
+                                    <div class="msg-reply" data-reply-id="{{ msg.reply_to.id }}">
+                                        <div class="reply-author">{{ msg.reply_to.username }}</div>
+                                        <div class="reply-snippet">{{ msg.reply_to.snippet }}</div>
+                                    </div>
+                                {% endif %}
+                                <div class="msg-text" style="margin-top: 8px;">{{ msg.content|e }}</div>
+                            {% endif %}
+                        </div>
+
                     {% elif msg.message_type == 'file' %}
-                        <div class="message-file" style="display: flex; align-items: center;">
-                            <div class="file-icon">📎</div>
-                            <div style="flex: 1;">
-                                <div style="font-weight: bold;">{{ msg.file_name }}</div>
-                                <div style="font-size: 0.8em; color: #aaa;">
-                                    <a href="{{ msg.file_url }}" onclick="previewFile('{{ msg.file_url }}'); return false;" style="color: #007bff; margin-right: 10px;">Предпросмотр</a>
-                                    <a href="{{ msg.file_url }}" download style="color: #007bff;">Скачать</a>
+                        <div style="display: flex; align-items: center; gap: 10px; min-width: 200px;">
+                            <div class="file-icon">📄</div>
+                            <div style="flex: 1; min-width: 0;">
+                                <div style="font-weight: 600; margin-bottom: 4px;">{{ msg.file_name }}</div>
+                                <div style="font-size: 0.85rem; display: flex; gap: 12px;">
+                                    <a href="{{ msg.file_url }}" onclick="previewFile('{{ msg.file_url }}'); return false;" style="color: {% if msg.user_id == current_user.id %}var(--bg-dark){% else %}var(--primary){% endif %}; text-decoration: underline;">Preview</a>
+                                    <a href="{{ msg.file_url }}" download style="color: {% if msg.user_id == current_user.id %}var(--bg-dark){% else %}var(--primary){% endif %}; text-decoration: underline;">Download</a>
                                 </div>
                             </div>
                         </div>
-                        {% if msg.content %}<div>{{ msg.content }}</div>{% endif %}
+                        {% if msg.content %}
+                            {% if msg.reply_to %}
+                                <div class="msg-reply" data-reply-id="{{ msg.reply_to.id }}">
+                                    <div class="reply-author">{{ msg.reply_to.username }}</div>
+                                    <div class="reply-snippet">{{ msg.reply_to.snippet }}</div>
+                                </div>
+                            {% endif %}
+                            <div class="msg-text" style="margin-top: 8px;">{{ msg.content|e }}</div>
+                        {% endif %}
                     {% else %}
-                        {{ msg.content }}
+                        {% if msg.reply_to %}
+                            <div class="msg-reply" data-reply-id="{{ msg.reply_to.id }}">
+                                <div class="reply-author">{{ msg.reply_to.username }}</div>
+                                <div class="reply-snippet">{{ msg.reply_to.snippet }}</div>
+                            </div>
+                        {% endif %}
+                        <div class="msg-text">{{ msg.content|e }}</div>
                     {% endif %}
                 </div>
+                {% if msg.edited_at %}
+                <span class="msg-edited" data-edited-at="{{ msg.edited_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}" style="color: var(--text-muted); font-size: 0.75rem; align-self: center;">(edited)</span>
+                {% endif %}
+                
                 {% if msg.reactions_grouped %}
                 <div class="message-reactions">
                     {% for emoji, users in msg.reactions_grouped.items() %}
@@ -202,62 +317,185 @@
     </div>
 
     {% if room.type == 'broadcast' and member.role not in ['owner', 'admin'] %}
-        <div class="input-area" style="text-align: center; color: #777;">
-            Только администраторы могут писать здесь.
+        <div class="chat-input-area" style="text-align: center; color: var(--text-muted); padding: 20px;">
+            Only administrators can write here.
             {% if room.linked_chat_id %}
-             <a href="{{ url_for('view_room', room_id=room.linked_chat_id) }}" style="color: #007bff;">Перейти к комментариям</a>
+            <br><a href="{{ url_for('main.view_room', room_id=room.linked_chat_id) }}" style="color: var(--primary); font-weight: 600;">Go to comments</a>
             {% endif %}
         </div>
     {% else %}
-        <div id="filePreviewArea" style="display: none; padding: 10px 20px; background: #2f3136; border-top: 1px solid #202225; max-height: 200px; overflow-y: auto;">
+        <div id="filePreviewArea" style="display: none; padding: 12px 20px; background: var(--bg-panel); border-top: 1px solid var(--border); max-height: 180px; overflow-y: auto;">
             <div id="filePreviews" style="display: flex; flex-wrap: wrap; gap: 10px;"></div>
         </div>
-        <div class="input-area" style="display: flex; gap: 10px; align-items: flex-end;">
+        <!-- Reply preview (shows quoted message when replying) -->
+        <div id="replyPreview" style="display: none; padding: 8px 20px; background: rgba(0,0,0,0.03); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
+                <div id="replyPreviewContent" style="font-size:0.9rem; color:var(--text-muted);"></div>
+                <button type="button" class="btn btn-secondary" onclick="clearReply()">Cancel</button>
+            </div>
+        </div>
+        <div class="chat-input-area">
             <input type="file" id="fileInput" style="display: none;" multiple accept="image/*,audio/*,.txt,.py,.js,.html,.css,.json,.xml,.md,.pdf,.zip,.rar">
-            <button type="button" class="btn" onclick="document.getElementById('fileInput').click();" style="padding: 10px;">📎</button>
-            <button type="button" class="btn" onclick="toggleStickerPicker()" style="padding: 10px;">😀</button>
-            <textarea id="myMessage" class="input-box" placeholder="Написать сообщение..." style="flex: 1; min-height: 40px; max-height: 150px; resize: none; font-family: inherit;" rows="1"></textarea>
-            <button type="button" class="btn" onclick="sendMessage()">Отправить</button>
+            <button type="button" class="btn-icon btn-add" onclick="document.getElementById('fileInput').click();" title="Attach file">
+                <span class="material-icons-round">attach_file</span>
+            </button>
+            <button type="button" class="btn-icon btn-add" onclick="toggleStickerPicker()" title="Emoji & stickers">
+                <span class="material-icons-round">emoji_emotions</span>
+            </button>
+            <textarea id="myMessage" class="chat-input" placeholder="Type a message..." rows="1"></textarea>
+            <button type="button" class="btn-icon btn-send" onclick="sendMessage()" title="Send message">
+                <span class="material-icons-round">send</span>
+            </button>
         </div>
     {% endif %}
 </div>
 
-<!-- Модальные окна -->
+<script>
+// Mobile rooms list toggle: show/hide overlay and prevent background scrolling when open
+function toggleRoomsMobile() {
+    const rooms = document.querySelector('.rooms-list');
+    if (!rooms) return;
+    const isOpen = document.body.classList.contains('rooms-open');
+    if (!isOpen) {
+        // open overlay via body class, create backdrop
+        document.body.classList.add('rooms-open');
+        let backdrop = document.querySelector('.rooms-backdrop');
+        if (!backdrop) {
+            backdrop = document.createElement('div');
+            backdrop.className = 'rooms-backdrop';
+            document.body.appendChild(backdrop);
+            backdrop.addEventListener('click', function() {
+                document.body.classList.remove('rooms-open');
+                const b = document.querySelector('.rooms-backdrop');
+                if (b) b.remove();
+            });
+        }
+    } else {
+        // close overlay
+        document.body.classList.remove('rooms-open');
+        const backdrop = document.querySelector('.rooms-backdrop');
+        if (backdrop) backdrop.remove();
+    }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    const btn = document.getElementById('roomsToggle');
+    const rooms = document.querySelector('.rooms-list');
+    if (!btn || !rooms) return;
+
+    // Show the toggle button on small screens
+    const mq = window.matchMedia('(max-width: 480px)');
+    function updateToggleVisibility() {
+        if (mq.matches) {
+            btn.style.display = 'inline-flex';
+            // hide the close button by default; CSS will show it when overlay is open
+            const close = document.getElementById('roomsClose');
+            if (close) close.style.display = 'none';
+        } else {
+            btn.style.display = 'none';
+            document.body.classList.remove('rooms-open');
+            const close = document.getElementById('roomsClose');
+            if (close) close.style.display = 'none';
+        }
+    }
+    mq.addListener(updateToggleVisibility);
+    updateToggleVisibility();
+
+    btn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        toggleRoomsMobile();
+    });
+
+    // Clicking outside the rooms list closes it
+    document.addEventListener('click', function(e) {
+        if (!mq.matches) return;
+        if (!document.body.classList.contains('rooms-open')) return;
+        const target = e.target;
+        if (!rooms.contains(target) && !btn.contains(target)) {
+            document.body.classList.remove('rooms-open');
+            const backdrop = document.querySelector('.rooms-backdrop');
+            if (backdrop) backdrop.remove();
+        }
+    });
+    // Close button inside rooms header
+    const closeBtn = document.getElementById('roomsClose');
+    if (closeBtn) {
+        closeBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            document.body.classList.remove('rooms-open');
+            const backdrop = document.querySelector('.rooms-backdrop');
+            if (backdrop) backdrop.remove();
+        });
+    }
+});
+</script>
+
+<script>
+// Ensure messages are scrolled into view when input focuses (helps on mobile keyboard)
+document.addEventListener('DOMContentLoaded', function() {
+    const input = document.getElementById('myMessage');
+    const messages = document.getElementById('messages');
+    if (!input || !messages) return;
+
+    function scrollToBottom() {
+        messages.scrollTop = messages.scrollHeight;
+    }
+
+    input.addEventListener('focusin', function() {
+        // Scroll to bottom and lock position
+        scrollToBottom();
+        messages.classList.add('no-scroll');
+        document.body.style.overflow = 'hidden';
+    });
+
+    input.addEventListener('focusout', function() {
+        // Unlock scroll
+        messages.classList.remove('no-scroll');
+        document.body.style.overflow = '';
+    });
+});
+</script>
+
+<!-- Overlays & Modals -->
 <div class="fullscreen-overlay" id="fullscreenOverlay" onclick="this.style.display='none';">
     <img id="fullscreenImage" src="">
 </div>
 
 <div class="profile-preview" id="profilePreview"></div>
 
-<!-- Стилизованные модальные окна -->
+<!-- Confirmation Modal -->
 <div class="modal-overlay" id="confirmModal">
     <div class="modal">
-        <div class="modal-header" id="confirmTitle">Подтверждение</div>
+        <div class="modal-header" id="confirmTitle">Confirm</div>
         <div class="modal-body" id="confirmMessage"></div>
         <div class="modal-footer">
-            <button class="modal-btn modal-btn-secondary" onclick="closeConfirmModal(false)">Отмена</button>
-            <button class="modal-btn modal-btn-danger" id="confirmBtn" onclick="closeConfirmModal(true)">Подтвердить</button>
+            <button class="btn btn-secondary" onclick="closeConfirmModal(false)">Cancel</button>
+            <button class="btn btn-login" id="confirmBtn" onclick="closeConfirmModal(true)" style="background: var(--danger);">Confirm</button>
         </div>
     </div>
 </div>
 
+<!-- Alert Modal -->
 <div class="modal-overlay" id="alertModal">
     <div class="modal">
-        <div class="modal-header">Уведомление</div>
+        <div class="modal-header">Alert</div>
         <div class="modal-body" id="alertMessage"></div>
         <div class="modal-footer">
-            <button class="modal-btn modal-btn-primary" onclick="closeAlertModal()">ОК</button>
+            <button class="btn btn-login" onclick="closeAlertModal()">OK</button>
         </div>
     </div>
 </div>
 
-<!-- Контекстное меню для сообщений -->
+<!-- Context Menu for Messages -->
 <div class="context-menu" id="messageContextMenu">
     <div class="context-menu-item" onclick="copyMessage()">
-        <span>📋</span> Копировать
+        <span>📋</span> Copy
+    </div>
+    <div class="context-menu-item" onclick="replyToMessageFromMenu()">
+        <span>↩️</span> Reply
     </div>
     <div class="context-menu-item" onclick="editMessage()">
-        <span>✏️</span> Редактировать
+        <span>✏️</span> Edit
     </div>
     <div class="context-menu-item" onclick="forwardMessage()">
         <span>➡️</span> Переслать
@@ -276,6 +514,16 @@
     <div class="emoji-grid" id="emojiGrid"></div>
 </div>
 
+<!-- Context Menu for Channels -->
+<div class="context-menu" id="channelContextMenu" style="display:none;">
+    <div class="context-menu-item" onclick="editChannelFromContext()">
+        <span class="material-icons-round">edit</span> Edit Channel
+    </div>
+    <div class="context-menu-item danger" onclick="deleteChannelFromContext()">
+        <span class="material-icons-round">delete</span> Delete Channel
+    </div>
+</div>
+
 <!-- Стикер пикер (как в Telegram) -->
 <div class="sticker-picker" id="stickerPicker" style="width: 400px;">
     <div id="stickerPackList" style="display: flex; gap: 5px; padding: 10px; border-bottom: 1px solid #202225; overflow-x: auto;">
@@ -284,145 +532,449 @@
     <div class="sticker-grid" id="stickerGrid" style="padding: 10px;"></div>
 </div>
 
-<!-- Модальное окно создания комнаты -->
-<div class="modal-overlay" id="createRoomModal">
-    <div class="modal">
-        <div class="modal-header">Создать комнату</div>
-        <form id="createRoomForm" onsubmit="submitCreateRoom(event); return false;">
-            <div class="modal-body">
-                <label>Название:</label>
-                <input type="text" id="roomName" class="input-box" style="margin-bottom: 10px;" required>
-                <label>Тип:</label>
-                <select id="roomType" class="input-box" style="margin-bottom: 10px;">
-                    <option value="server">Сервер (С чатами)</option>
-                    <option value="broadcast">Блог (Только чтение)</option>
-                </select>
-                <label style="display: flex; align-items: center; gap: 10px;">
-                    <input type="checkbox" id="roomPublic">
-                    Публичный (виден в поиске)
-                </label>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="modal-btn modal-btn-secondary" onclick="closeModal('createRoomModal')">Отмена</button>
-                <button type="submit" class="modal-btn modal-btn-primary">Создать</button>
-            </div>
-        </form>
-    </div>
-</div>
 
-<!-- Модальное окно создания стикерпака -->
-<div class="modal-overlay" id="createStickerPackModal">
-    <div class="modal">
-        <div class="modal-header">Создать стикерпак</div>
-        <form id="createStickerPackForm" onsubmit="submitCreateStickerPack(event); return false;">
-            <div class="modal-body">
-                <label>Название:</label>
-                <input type="text" id="packName" class="input-box" style="margin-bottom: 10px;" required>
-                <label>Эмодзи для иконки:</label>
-                <input type="text" id="packEmoji" class="input-box" style="margin-bottom: 10px;" value="📦" maxlength="2">
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="modal-btn modal-btn-secondary" onclick="closeModal('createStickerPackModal')">Отмена</button>
-                <button type="submit" class="modal-btn modal-btn-primary">Создать</button>
-            </div>
-        </form>
-    </div>
-</div>
 
-<!-- Модальное окно редактирования стикерпака -->
-<div class="modal-overlay" id="editStickerPackModal">
-    <div class="modal">
-        <div class="modal-header">Редактировать стикерпак</div>
-        <div class="modal-body" id="editStickerPackContent">
-            <!-- Контент будет добавлен динамически -->
-        </div>
-        <div class="modal-footer">
-            <button type="button" class="modal-btn modal-btn-secondary" onclick="closeModal('editStickerPackModal')">Закрыть</button>
-        </div>
-    </div>
-</div>
+
 
 <!-- Модальное окно редактирования канала -->
-<div id="channelEditModal" style="display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: #2f3136; padding: 20px; border-radius: 10px; z-index: 10002; min-width: 300px;">
-    <h3>Редактировать канал</h3>
-    <form id="channelEditForm" onsubmit="saveChannelEdit(event); return false;">
-        <input type="hidden" id="edit_channel_id">
-        <label>Название:</label>
-        <input type="text" id="edit_channel_name" class="input-box" style="margin-bottom: 10px;" required>
-        <label>Описание:</label>
-        <textarea id="edit_channel_description" class="input-box" style="margin-bottom: 10px; height: 60px;"></textarea>
-        <label>Эмодзи (или загрузите 32x32 изображение):</label>
-        <input type="text" id="edit_channel_emoji" class="input-box" style="margin-bottom: 10px;" placeholder="🎵">
-        <input type="file" id="edit_channel_icon" accept="image/*" style="margin-bottom: 10px; width: 100%;">
-        <div style="display: flex; gap: 10px;">
-            <button type="submit" class="btn">Сохранить</button>
-            <button type="button" class="btn btn-red" onclick="document.getElementById('channelEditModal').style.display='none';">Отмена</button>
-        </div>
-    </form>
+<div class="modal-overlay" id="channelEditModal">
+    <div class="modal">
+        <div class="modal-header">Edit Channel</div>
+        <form id="channelEditForm" onsubmit="saveChannelEdit(event); return false;">
+            <div class="modal-body">
+                <input type="hidden" id="edit_channel_id">
+                <div class="input-group">
+                    <label class="input-label">Channel Name</label>
+                    <input type="text" id="edit_channel_name" class="custom-input" required>
+                </div>
+                <div class="input-group">
+                    <label class="input-label">Description</label>
+                    <textarea id="edit_channel_description" class="custom-input" style="resize: vertical; min-height: 60px;"></textarea>
+                </div>
+                <div class="input-group">
+                    <label class="input-label">Emoji (32x32 icon)</label>
+                    <input type="text" id="edit_channel_emoji" class="custom-input" placeholder="🎵">
+                </div>
+                <div class="input-group">
+                    <label class="input-label">Upload Icon</label>
+                    <input type="file" id="edit_channel_icon" accept="image/*" class="custom-input" style="padding: 8px; cursor: pointer;">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="document.getElementById('channelEditModal').style.display='none';">Cancel</button>
+                <button type="submit" class="btn btn-login">Save</button>
+            </div>
+        </form>
+    </div>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+<!-- Load socket.io client from the server (Flask-SocketIO exposes it at /socket.io/socket.io.js). */ -->
+<script src="/socket.io/socket.io.js"></script>
 <script>
-    const socket = io();
-    const channelId = "{{ active_channel_id }}";
-    const roomId = "{{ room.id }}";
-    const messagesDiv = document.getElementById('messages');
-    const currentUserId = {{ current_user.id }};
-    const currentUsername = "{{ current_user.username }}";
-    const userRole = "{{ member.role }}";
+// Fallback to CDN if server copy missing
+if (typeof io === 'undefined') {
+    var s = document.createElement('script');
+    s.src = 'https://cdn.socket.io/4.6.1/socket.io.min.js';
+    s.crossOrigin = 'anonymous';
+    document.head.appendChild(s);
+}
+</script>
+<script>
+    // === Глобальные переменные (объявляются до всех функций) ===
     let selectedFiles = [];
     let filePreviews = [];
-    
-    socket.on('connect', function() {
-        socket.emit('join', {channel_id: channelId});
-    });
+    let contextMenuMessageId = null;
+    let contextMenuMessageElement = null;
+    let contextMenuChannelId = null;
+    let contextMenuChannelData = {};
+    let confirmCallback = null;
+    const commonEmojis = ['👍', '❤️', '😂', '😮', '😢', '🙏', '🔥', '👏', '🎉', '💯', '😍', '🤔', '😴', '🤮', '💩'];
 
-    socket.on('receive_message', function(data) {
-        addMessageToChat(data);
-    });
+    // Known playable music extensions (keep synced with server config)
+    const MUSIC_EXTENSIONS = ['mp3','ogg','flac','wav'];
 
-    socket.on('message_deleted', function(data) {
-        const msgElement = document.querySelector(`[data-msg-id="${data.message_id}"]`);
-        if (msgElement) {
-            msgElement.remove();
+    // Pause all other audio elements except the provided one
+    function pauseAllOtherAudio(exceptEl) {
+        document.querySelectorAll('audio').forEach(a => {
+            try {
+                if (exceptEl && a === exceptEl) return;
+                a.pause();
+            } catch (e) {}
+        });
+    }
+
+    // Pause all other media (audio/video) except the specified one
+    function pauseAllOtherMedia(exceptEl) {
+        document.querySelectorAll('audio, video').forEach(m => {
+            try {
+                if (exceptEl && m === exceptEl) return;
+                m.pause();
+            } catch (e) {}
+        });
+    }
+
+    // Global aliases so functions outside initializeApp can access socket and ids
+    var socket = null;
+    var channelId = null;
+    var roomId = null;
+    var messagesDiv = null;
+    var currentUserId = null;
+    var currentUsername = null;
+    var userRole = null;
+    var pendingReactions = {}; // store reactions received before message DOM exists
+
+    // === Инициализация после загрузки socket.io И DOM ===
+    function initializeApp() {
+        // Проверяем, загружена ли socket.io библиотека
+        if (typeof io === 'undefined') {
+            // Try to dynamically load the CDN once, avoid spamming the console
+            if (!window._socketIoLoadAttempted) {
+                window._socketIoLoadAttempted = true;
+                console.warn('socket.io not found; attempting dynamic load from CDN...');
+                const s = document.createElement('script');
+                s.src = 'https://cdn.socket.io/4.6.1/socket.io.min.js';
+                s.crossOrigin = 'anonymous';
+                s.onload = function() { console.info('socket.io loaded from CDN'); initializeApp(); };
+                s.onerror = function() { console.error('Failed to load socket.io from CDN'); setTimeout(initializeApp, 1000); };
+                document.head.appendChild(s);
+                return;
+            }
+            // Already attempted loading; retry later but not too frequently
+            setTimeout(initializeApp, 1000);
+            return;
         }
-    });
+        
+        // Основной код инициализации socket.io и слушателей
+        socket = io();
+        channelId = parseInt("{{ active_channel_id }}") || null;
+        roomId = parseInt("{{ room.id }}") || null;
+        messagesDiv = document.getElementById('messages');
+        currentUserId = {{ current_user.id }};
+        currentUsername = "{{ current_user.username }}";
+        userRole = "{{ member.role }}";
 
-    document.getElementById('fileInput').addEventListener('change', function(e) {
-        const files = Array.from(e.target.files);
-        files.forEach(file => {
-            addFilePreview(file);
+        // Also expose on window for templates/scripts expecting window.*
+        window.socket = socket;
+        window.channelId = channelId;
+        window.roomId = roomId;
+        window.messagesDiv = messagesDiv;
+        window.currentUserId = currentUserId;
+        window.currentUsername = currentUsername;
+        window.userRole = userRole;
+        // Reply state for reply-to-message feature
+        // when set, sendMessage will include reply metadata and preview it
+        window.replyTo = null; // { id, username, snippet }
+
+        // Attach handler so playing one audio stops others (for existing audio elements)
+        try {
+            document.querySelectorAll('audio').forEach(a => {
+                a.onplay = () => pauseAllOtherAudio(a);
+            });
+        } catch (e) {}
+
+        // Load saved draft for this channel (if any)
+        try {
+            const inputEl = document.getElementById('myMessage');
+            const draftKey = `draft_${roomId}_${channelId}`;
+            const saved = localStorage.getItem(draftKey);
+            if (saved && inputEl) inputEl.value = saved;
+            if (inputEl) {
+                inputEl.addEventListener('input', () => {
+                    try { localStorage.setItem(draftKey, inputEl.value); } catch (e) {}
+                });
+            }
+        } catch (e) {}
+        
+        socket.on('connect', function() {
+            socket.emit('join', {channel_id: channelId});
         });
-        updateFilePreviewArea();
-    });
 
-    const textarea = document.getElementById('myMessage');
-    if (textarea) {
-        // Автоматическое изменение высоты textarea
-        textarea.addEventListener('input', function() {
-            this.style.height = 'auto';
-            this.style.height = Math.min(this.scrollHeight, 150) + 'px';
+        socket.on('receive_message', function(data) {
+            try { console.debug('receive_message payload:', data); } catch(e) {}
+            addMessageToChat(data);
         });
 
-        // Обработка Tab для отступа
-        textarea.addEventListener('keydown', function(event) {
-            if (event.key === 'Tab') {
-                event.preventDefault();
-                const start = this.selectionStart;
-                const end = this.selectionEnd;
-                this.value = this.value.substring(0, start) + '    ' + this.value.substring(end);
-                this.selectionStart = this.selectionEnd = start + 4;
+        socket.on('error', function(data) {
+            try {
+                if (data && data.message) showAlert(data.message);
+            } catch (e) { console.error('Socket error event', data); }
+        });
+
+        socket.on('message_deleted', function(data) {
+            const msgElement = document.querySelector(`[data-msg-id="${data.message_id}"]`);
+            if (msgElement) {
+                msgElement.remove();
             }
         });
 
-        // Обработка Enter и Shift+Enter
-        textarea.addEventListener("keydown", function(event) {
-            if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                sendMessage();
+        document.getElementById('fileInput').addEventListener('change', function(e) {
+            const files = Array.from(e.target.files);
+            files.forEach(file => {
+                addFilePreview(file);
+            });
+            updateFilePreviewArea();
+        });
+
+        const textarea = document.getElementById('myMessage');
+        if (textarea) {
+            // Автоматическое изменение высоты textarea
+            textarea.addEventListener('input', function() {
+                this.style.height = 'auto';
+                this.style.height = Math.min(this.scrollHeight, 150) + 'px';
+            });
+
+            // Обработка Tab для отступа
+            textarea.addEventListener('keydown', function(event) {
+                if (event.key === 'Tab') {
+                    event.preventDefault();
+                    const start = this.selectionStart;
+                    const end = this.selectionEnd;
+                    this.value = this.value.substring(0, start) + '    ' + this.value.substring(end);
+                    this.selectionStart = this.selectionEnd = start + 4;
+                }
+            });
+
+            // Обработка Enter и Shift+Enter
+            textarea.addEventListener("keydown", function(event) {
+                if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    sendMessage();
+                }
+            });
+        }
+
+        // Paste from clipboard: support images and files (screenshots, copied files)
+        document.addEventListener('paste', function(e) {
+            try {
+                const items = (e.clipboardData && e.clipboardData.items) || [];
+                let handled = false;
+                for (let i = 0; i < items.length; i++) {
+                    const item = items[i];
+                    if (item.kind === 'file') {
+                        const file = item.getAsFile();
+                        if (file) {
+                            addFilePreview(file);
+                            handled = true;
+                        }
+                    }
+                }
+                if (handled) {
+                    updateFilePreviewArea();
+                    e.preventDefault();
+                }
+            } catch (e) { console.error('paste handler error', e); }
+        });
+        
+        // Нормализуем существующие сообщения при загрузке
+        normalizeExistingMessages();
+        renderTimestampsAndSeparators();
+        // Bind click handlers to any server-rendered reply blocks so clicking jumps to target
+        try {
+            document.querySelectorAll('.msg-reply').forEach(rb => {
+                if (!rb.dataset || !rb.dataset.replyId) return;
+                rb.style.cursor = 'pointer';
+                rb.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    try {
+                        const target = document.querySelector(`[data-msg-id="${rb.dataset.replyId}"]`);
+                        if (target) {
+                            target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            target.classList.add('reply-target-highlight');
+                            setTimeout(() => target.classList.remove('reply-target-highlight'), 1400);
+                        }
+                    } catch (ex) { console.error('bindExistingReplyClicks jump failed', ex); }
+                });
+            });
+        } catch (e) { console.error('bindExistingReplyClicks failed', e); }
+        
+        // Прокручиваем вниз
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        
+        // === КОНТЕКСТНОЕ МЕНЮ И СОБЫТИЯ ДОКУМЕНТА ===
+        // Long-press handler for mobile
+        let touchTimeout;
+        let touchX, touchY;
+        
+        document.addEventListener('touchstart', function(e) {
+            const messageEl = e.target.closest('.message');
+            if (messageEl) {
+                touchX = e.touches[0].clientX;
+                touchY = e.touches[0].clientY;
+                touchTimeout = setTimeout(() => {
+                    e.preventDefault();
+                    const msgId = messageEl.getAttribute('data-msg-id');
+                    if (msgId) {
+                        contextMenuMessageId = parseInt(msgId);
+                        contextMenuMessageElement = messageEl;
+                        showContextMenu(touchX, touchY);
+                    }
+                }, 500); // 500ms long-press
+            }
+        });
+        
+        document.addEventListener('touchend', function() {
+            clearTimeout(touchTimeout);
+        });
+        
+        document.addEventListener('touchmove', function() {
+            clearTimeout(touchTimeout);
+        });
+        
+        document.addEventListener('contextmenu', function(e) {
+            const messageEl = e.target.closest('.message');
+            if (messageEl) {
+                e.preventDefault();
+                const msgId = messageEl.getAttribute('data-msg-id');
+                if (msgId) {
+                    contextMenuMessageId = parseInt(msgId);
+                    contextMenuMessageElement = messageEl;
+                    showContextMenu(e.clientX, e.clientY);
+                }
+            }
+        });
+
+        document.addEventListener('click', function() {
+            hideContextMenu();
+        });
+        
+        document.getElementById('confirmModal').addEventListener('click', function(e) {
+            if (e.target === this) closeConfirmModal(false);
+        });
+        document.getElementById('alertModal').addEventListener('click', function(e) {
+            if (e.target === this) closeAlertModal();
+        });
+        
+        document.addEventListener('click', function(e) {
+            if (!e.target.closest('#profilePreview') && !e.target.closest('.avatar-clickable') && !e.target.closest('.msg-meta span')) {
+                document.getElementById('profilePreview').style.display = 'none';
             }
         });
     }
+    
+    // Setup long-press for channels on mobile
+    function setupChannelLongPress() {
+        const channelItems = document.querySelectorAll('.channel-item');
+        channelItems.forEach(item => {
+            let touchTimeout;
+            let touchX, touchY;
+            
+            item.addEventListener('touchstart', function(e) {
+                touchX = e.touches[0].clientX;
+                touchY = e.touches[0].clientY;
+                touchTimeout = setTimeout(() => {
+                    const channelId = item.dataset.channelId;
+                    if (channelId) {
+                        // Create a synthetic event object with necessary properties
+                        const syntheticEvent = {
+                            preventDefault: () => {},
+                            stopPropagation: () => {},
+                            clientX: touchX,
+                            clientY: touchY,
+                            target: item
+                        };
+                        showChannelContextMenu(syntheticEvent, parseInt(channelId));
+                    }
+                }, 500); // 500ms long-press
+            });
+            
+            item.addEventListener('touchend', function() {
+                clearTimeout(touchTimeout);
+            });
+            
+            item.addEventListener('touchmove', function() {
+                clearTimeout(touchTimeout);
+            });
+        });
+    }
+    
+    // Setup long-press for server icons in sidebar on mobile (prevent link preview)
+    function setupServerLongPress() {
+        const serverItems = document.querySelectorAll('.sidebar-server');
+        serverItems.forEach(item => {
+            let touchTimeout;
+            let touchStarted = false;
+            let touchX, touchY;
+            
+            item.addEventListener('touchstart', function(e) {
+                touchStarted = true;
+                touchX = e.touches[0].clientX;
+                touchY = e.touches[0].clientY;
+                e.preventDefault(); // Prevent link preview immediately
+                touchTimeout = setTimeout(() => {
+                    // Show context menu
+                    const roomId = item.dataset.roomId;
+                    const role = item.dataset.role;
+                    if (roomId) {
+                        window.sidebarContextMenuServerId = parseInt(roomId);
+                        window.sidebarContextMenuServerRole = role;
+                        
+                        const menu = document.getElementById('sidebarServerContextMenu');
+                        if (menu) {
+                            menu.style.display = 'block';
+                            menu.style.left = Math.min(touchX, window.innerWidth - 220) + 'px';
+                            menu.style.top = Math.min(touchY, window.innerHeight - 200) + 'px';
+                            
+                            // Show/hide menu items based on role
+                            const canInvite = role === 'owner' || role === 'admin';
+                            const canDelete = role === 'owner' || role === 'admin';
+                            const canLeave = role !== 'owner';
+                            
+                            const menuItems = menu.querySelectorAll('.context-menu-item');
+                            if (menuItems[0]) menuItems[0].style.display = canInvite ? 'flex' : 'none';
+                            if (menuItems[1]) menuItems[1].style.display = canDelete ? 'flex' : 'none';
+                            if (menuItems[2]) menuItems[2].style.display = canLeave ? 'flex' : 'none';
+                        }
+                    }
+                }, 500);
+            }, { passive: false });
+            
+            item.addEventListener('touchend', function(e) {
+                if (!touchStarted) return;
+                clearTimeout(touchTimeout);
+                touchStarted = false;
+                // Navigate to the link
+                window.location.href = item.href;
+                e.preventDefault();
+            }, { passive: false });
+            
+            item.addEventListener('touchmove', function() {
+                clearTimeout(touchTimeout);
+                touchStarted = false;
+            });
+        });
+    }
+    
+    // Вызываем инициализацию когда DOM готов
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log('[DEBUG] DOMContentLoaded - calling initializeApp');
+            initializeApp();
+            // Initialize media players for server-rendered content
+            setTimeout(() => {
+                console.log('[DEBUG] DOMContentLoaded+0ms - initializing media players');
+                runUpgradeAndInit();
+            }, 50);
+        });
+    } else {
+        console.log('[DEBUG] DOM already loaded - calling initializeApp immediately');
+        initializeApp();
+        // Initialize media players for server-rendered content
+        setTimeout(() => {
+            console.log('[DEBUG] DOM loaded+0ms - initializing media players');
+            runUpgradeAndInit();
+        }, 50);
+    }
+    
+    // Setup channel long-press after DOM is ready
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', setupChannelLongPress);
+        document.addEventListener('DOMContentLoaded', setupServerLongPress);
+    } else {
+        setupChannelLongPress();
+        setupServerLongPress();
+    }
+    
+    // === ФУНКЦИИ (объявляются в глобальном скопе, доступны всегда) ===
 
     function addFilePreview(file) {
         const preview = {
@@ -473,26 +1025,46 @@
                 };
                 reader.readAsDataURL(preview.file);
             } else if (preview.file.type.startsWith('audio/')) {
-                const reader = new FileReader();
-                reader.onload = function(e) {
-                    const audio = document.createElement('audio');
-                    audio.controls = true;
-                    audio.style.width = '180px';
-                    audio.style.height = '30px';
-                    const source = document.createElement('source');
-                    source.src = e.target.result;
-                    source.type = preview.file.type;
-                    audio.appendChild(source);
-                    
+                const ext = (preview.file.name.split('.').pop() || '').toLowerCase();
+                // If extension is not a known playable music ext, show generic file preview
+                if (!MUSIC_EXTENSIONS.includes(ext)) {
+                    const icon = document.createElement('div');
+                    icon.className = 'file-icon';
+                    icon.style.textAlign = 'center';
+                    icon.style.fontSize = '2em';
+                    icon.textContent = '🎵';
+
                     const fileName = document.createElement('div');
                     fileName.className = 'file-name';
                     fileName.textContent = preview.file.name;
-                    
+
                     div.appendChild(removeBtn);
-                    div.appendChild(audio);
+                    div.appendChild(icon);
                     div.appendChild(fileName);
-                };
-                reader.readAsDataURL(preview.file);
+                } else {
+                    const reader = new FileReader();
+                    reader.onload = function(e) {
+                        const audio = document.createElement('audio');
+                        audio.controls = true;
+                        audio.style.width = '180px';
+                        audio.style.height = '30px';
+                        const source = document.createElement('source');
+                        source.src = e.target.result;
+                        source.type = preview.file.type;
+                        audio.appendChild(source);
+                        // stop other audio when this plays
+                        audio.onplay = () => pauseAllOtherAudio(audio);
+
+                        const fileName = document.createElement('div');
+                        fileName.className = 'file-name';
+                        fileName.textContent = preview.file.name;
+
+                        div.appendChild(removeBtn);
+                        div.appendChild(audio);
+                        div.appendChild(fileName);
+                    };
+                    reader.readAsDataURL(preview.file);
+                }
             } else {
                 const ext = preview.file.name.split('.').pop().toUpperCase();
                 const icon = document.createElement('div');
@@ -548,14 +1120,20 @@
             input.value = '';
             input.style.height = 'auto';
         } else if (text) {
-            socket.emit('send_message', {
-                room_id: roomId,
-                channel_id: channelId,
+            const payload = {
+                room_id: Number(window.roomId),
+                channel_id: Number(window.channelId),
                 msg: text,
                 message_type: 'text'
-            });
+            };
+            if (window.replyTo) {
+                payload.reply_to = { id: window.replyTo.id, username: window.replyTo.username, snippet: window.replyTo.snippet };
+            }
+            window.socket.emit('send_message', payload);
             input.value = '';
             input.style.height = 'auto';
+            // clear reply state after sending
+            clearReply();
         }
     }
 
@@ -565,23 +1143,41 @@
         
         fetch('/upload_file', {
             method: 'POST',
-            body: formData
+            body: formData,
+            credentials: 'same-origin',
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest'
+            }
         })
-        .then(r => r.json())
+        .then(r => {
+            if (!r.ok) {
+                console.error('Upload error:', r.status, r.statusText);
+                return null;
+            }
+            return r.json().catch(e => {
+                console.error('JSON parse error:', e);
+                return null;
+            });
+        })
         .then(data => {
-            if (data.success) {
+            if (data && data.success) {
                 const messageType = data.type;
-                socket.emit('send_message', {
-                    room_id: roomId,
-                    channel_id: channelId,
+                const payload = {
+                    room_id: Number(window.roomId),
+                    channel_id: Number(window.channelId),
                     msg: caption || '',
                     message_type: messageType,
                     file_url: data.url,
                     file_name: data.filename || file.name,
                     file_size: file.size
-                });
+                };
+                if (window.replyTo) payload.reply_to = { id: window.replyTo.id, username: window.replyTo.username, snippet: window.replyTo.snippet };
+                window.socket.emit('send_message', payload);
+            } else if (data === null) {
+                console.error('Upload failed or invalid response');
             }
-        });
+        })
+        .catch(err => console.error('Upload error:', err));
     }
 
     function deleteMessage(messageId) {
@@ -607,29 +1203,119 @@
     }
 
     function addMessageToChat(data) {
+        try { console.debug('addMessageToChat called, reply_to present:', !!data.reply_to, data.reply_to); } catch(e) {}
         const div = document.createElement('div');
         div.className = 'message';
         div.setAttribute('data-msg-id', data.id || '');
+        // Determine if we should auto-scroll after adding (only when user is near bottom)
+        // Ensure messagesDiv is initialized
+        if (!window.messagesDiv) {
+            window.messagesDiv = document.getElementById('messages') || document.querySelector('.messages-container');
+        }
         
-        // Создаем структуру сообщения
-        div.innerHTML = `
-            <div class="avatar avatar-clickable" onclick="showProfile(${data.user_id || 0}, event)">
-                <img src="${data.avatar}">
-            </div>
-            <div class="msg-content" data-user-id="${data.user_id || 0}">
-                <div class="msg-meta">
-                    <span style="color: white; font-weight: bold; margin-right: 5px; cursor: pointer;" onclick="showProfile(${data.user_id || 0}, event)">${data.username}</span> 
-                    ${data.timestamp}
-                    ${data.edited_at ? '<span style="color: #72767d; font-size: 0.85em; margin-left: 5px;">(изменено)</span>' : ''}
+        let wasNearBottom = true;
+        try {
+            if (window.messagesDiv) {
+                wasNearBottom = (window.messagesDiv.scrollHeight - window.messagesDiv.scrollTop - window.messagesDiv.clientHeight) < 150;
+            }
+        } catch (e) { wasNearBottom = true; }
+        
+        // Создаем структуру сообщения, различая отправителя
+        const isSent = Number(data.user_id) === Number(window.currentUserId);
+        div.className = 'message ' + (isSent ? 'sent' : 'received');
+
+        if (!isSent) {
+            // received message: show avatar then content, match server-rendered markup (.msg-bubble)
+            div.innerHTML = `
+                <div class="avatar avatar-clickable" onclick="showProfile(${data.user_id || 0}, event)">
+                    <img src="${data.avatar}">
                 </div>
-                <div class="msg-text"></div>
-            </div>
-        `;
-        
+                <div class="message-content" data-user-id="${data.user_id || 0}">
+                    <div class="msg-meta">
+                        <span class="msg-author" onclick="showProfile(${data.user_id || 0}, event)">${data.username}</span>
+                        <span class="msg-time" data-timestamp="${data.timestamp_iso || data.timestamp || ''}"></span>
+                        ${data.edited_at_iso ? `<span class=\"msg-edited\" data-edited-at=\"${data.edited_at_iso}\" style=\"color: #72767d; font-size: 0.85em; margin-left: 5px;\">(изменено)</span>` : ''}
+                    </div>
+                    <div class="msg-bubble"><div class="msg-text"></div></div>
+                </div>
+            `;
+        } else {
+            // sent message: content first (aligned to right), no avatar and no author label
+            div.innerHTML = `
+                <div class="message-content" data-user-id="${data.user_id || 0}">
+                    <div class="msg-meta">
+                        <span class="msg-time" data-timestamp="${data.timestamp_iso || data.timestamp || ''}"></span>
+                        ${data.edited_at_iso ? `<span class=\"msg-edited\" data-edited-at=\"${data.edited_at_iso}\" style=\"color: #72767d; font-size: 0.85em; margin-left: 5px;\">(изменено)</span>` : ''}
+                    </div>
+                    <div class="msg-bubble"><div class="msg-text"></div></div>
+                </div>
+            `;
+        }
+
         const msgTextDiv = div.querySelector('.msg-text');
+
+        // If this message is a reply to another message, render a small quoted block
+        if (data.reply_to) {
+            try {
+                const rt = data.reply_to;
+                const replyBlock = document.createElement('div');
+                replyBlock.className = 'msg-reply';
+                replyBlock.setAttribute('data-reply-id', rt.id || '');
+
+                const author = document.createElement('div');
+                author.className = 'reply-author';
+                author.textContent = rt.username || 'Unknown';
+
+                const snippet = document.createElement('div');
+                snippet.className = 'reply-snippet';
+                snippet.textContent = rt.snippet || '';
+
+                replyBlock.appendChild(author);
+                replyBlock.appendChild(snippet);
+
+                // If original message id provided, allow jump-to-message on click
+                if (rt.id) {
+                    replyBlock.style.cursor = 'pointer';
+                    replyBlock.addEventListener('click', function (e) {
+                        e.stopPropagation();
+                        try {
+                            const target = document.querySelector(`[data-msg-id="${rt.id}"]`);
+                            if (target) {
+                                target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                target.classList.add('reply-target-highlight');
+                                setTimeout(() => target.classList.remove('reply-target-highlight'), 1400);
+                            }
+                        } catch (ex) { console.error('Jump to reply target failed', ex); }
+                    });
+                }
+
+                // Insert reply block above the message text so setting textContent doesn't remove it
+                try {
+                    const bubble = div.querySelector('.msg-bubble') || div.querySelector('.message-content');
+                    if (bubble && msgTextDiv) {
+                        bubble.insertBefore(replyBlock, msgTextDiv);
+                    } else {
+                        msgTextDiv.appendChild(replyBlock);
+                    }
+                } catch (e) {
+                    try { msgTextDiv.appendChild(replyBlock); } catch (ex) { console.error('append replyBlock fallback failed', ex); }
+                }
+            } catch (e) { console.error('Render reply failed', e); }
+        }
         
+        // Helper to escape HTML when rendering text
+        function escapeHtml(str) {
+            if (!str) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
+
         // Обрабатываем содержимое в зависимости от типа
-        if (data.message_type === 'sticker') {
+                if (data.message_type === 'sticker') {
             const img = document.createElement('img');
             img.src = data.file_url;
             img.className = 'message-sticker';
@@ -643,35 +1329,193 @@
             msgTextDiv.appendChild(img);
             if (data.msg) {
                 const textDiv = document.createElement('div');
-                textDiv.textContent = data.msg;
+                textDiv.className = 'msg-text';
+                // preserve newlines by setting text content; CSS `pre-wrap` will render them
+                textDiv.textContent = data.msg || '';
                 msgTextDiv.appendChild(textDiv);
             }
         } else if (data.message_type === 'music') {
-            const fileDiv = document.createElement('div');
-            fileDiv.className = 'message-file';
+            // Create custom media player div (matching server-rendered markup)
+            const playerDiv = document.createElement('div');
+            playerDiv.className = 'custom-media-player';
+            playerDiv.setAttribute('data-type', 'audio');
+            
+            // Create audio element
             const audio = document.createElement('audio');
-            audio.controls = true;
-            audio.className = 'message-audio';
+            audio.className = 'cmp-media';
+            audio.setAttribute('preload', 'metadata');
             const source = document.createElement('source');
             source.src = data.file_url;
             source.type = 'audio/mpeg';
             audio.appendChild(source);
-            fileDiv.appendChild(audio);
+            playerDiv.appendChild(audio);
+            
+            // Create controls container
+            const controlsDiv = document.createElement('div');
+            controlsDiv.className = 'cmp-controls';
+            
+            // Play button
+            const playBtn = document.createElement('button');
+            playBtn.className = 'cmp-play';
+            playBtn.setAttribute('aria-label', 'Play');
+            playBtn.textContent = '▶';
+            controlsDiv.appendChild(playBtn);
+            
+            // Progress bar
+            const progressDiv = document.createElement('div');
+            progressDiv.className = 'cmp-progress';
+            progressDiv.setAttribute('role', 'progressbar');
+            progressDiv.setAttribute('aria-valuemin', '0');
+            progressDiv.setAttribute('aria-valuemax', '100');
+            progressDiv.setAttribute('aria-valuenow', '0');
+            const filledDiv = document.createElement('div');
+            filledDiv.className = 'cmp-progress-filled';
+            progressDiv.appendChild(filledDiv);
+            controlsDiv.appendChild(progressDiv);
+            
+            // Time display
+            const timeDiv = document.createElement('div');
+            timeDiv.className = 'cmp-time';
+            timeDiv.textContent = '0:00 / 0:00';
+            controlsDiv.appendChild(timeDiv);
+            
+            // Volume control
+            const volumeWrap = document.createElement('div');
+            volumeWrap.className = 'cmp-volume-wrap';
+            const volumeInput = document.createElement('input');
+            volumeInput.type = 'range';
+            volumeInput.className = 'cmp-volume';
+            volumeInput.min = '0';
+            volumeInput.max = '1';
+            volumeInput.step = '0.01';
+            volumeInput.value = '1';
+            volumeInput.setAttribute('aria-label', 'Volume');
+            volumeWrap.appendChild(volumeInput);
+            controlsDiv.appendChild(volumeWrap);
+            
+            playerDiv.appendChild(controlsDiv);
+            msgTextDiv.appendChild(playerDiv);
+            
+            // Add track info (title from filename or data)
+            const trackTitle = data.file_name || data.file_url.split('/').pop();
+            if (trackTitle) {
+                const titleDiv = document.createElement('div');
+                titleDiv.style.marginTop = '6px';
+                titleDiv.style.fontSize = '0.9rem';
+                titleDiv.style.fontWeight = '500';
+                titleDiv.style.color = 'var(--text-main)';
+                // Remove file extension and decode URL-encoded names
+                let displayName = trackTitle.replace(/\.[^.]+$/, '');
+                try {
+                    displayName = decodeURIComponent(displayName);
+                } catch (e) {}
+                // Replace underscores and dashes with spaces for readability
+                displayName = displayName.replace(/[_-]/g, ' ');
+                titleDiv.textContent = displayName;
+                msgTextDiv.appendChild(titleDiv);
+            }
+            
+            // Add download link
             const downloadDiv = document.createElement('div');
-            downloadDiv.style.marginTop = '5px';
+            downloadDiv.style.marginTop = '8px';
+            downloadDiv.style.display = 'flex';
+            downloadDiv.style.gap = '8px';
+            downloadDiv.style.fontSize = '0.9rem';
             const downloadLink = document.createElement('a');
             downloadLink.href = data.file_url;
             downloadLink.download = '';
             downloadLink.style.color = '#007bff';
-            downloadLink.textContent = 'Скачать';
+            downloadLink.style.fontWeight = '600';
+            downloadLink.textContent = 'Download';
             downloadDiv.appendChild(downloadLink);
-            fileDiv.appendChild(downloadDiv);
+            msgTextDiv.appendChild(downloadDiv);
+            
+            // Add caption if present
             if (data.msg) {
                 const textDiv = document.createElement('div');
-                textDiv.textContent = data.msg;
-                fileDiv.appendChild(textDiv);
+                textDiv.className = 'msg-text';
+                textDiv.style.marginTop = '8px';
+                textDiv.textContent = data.msg || '';
+                msgTextDiv.appendChild(textDiv);
             }
-            msgTextDiv.appendChild(fileDiv);
+        } else if (data.message_type === 'video') {
+            // Create custom media player div for video (matching server-rendered markup)
+            const playerDiv = document.createElement('div');
+            playerDiv.className = 'custom-media-player video-player';
+            playerDiv.setAttribute('data-type', 'video');
+            
+            // Create video element
+            const video = document.createElement('video');
+            video.className = 'cmp-media';
+            video.setAttribute('preload', 'metadata');
+            video.setAttribute('playsinline', '');
+            const source = document.createElement('source');
+            source.src = data.file_url;
+            source.type = 'video/mp4';
+            video.appendChild(source);
+            playerDiv.appendChild(video);
+            
+            // Create controls container
+            const controlsDiv = document.createElement('div');
+            controlsDiv.className = 'cmp-controls';
+            
+            // Play button
+            const playBtn = document.createElement('button');
+            playBtn.className = 'cmp-play';
+            playBtn.setAttribute('aria-label', 'Play');
+            playBtn.textContent = '▶';
+            controlsDiv.appendChild(playBtn);
+            
+            // Progress bar
+            const progressDiv = document.createElement('div');
+            progressDiv.className = 'cmp-progress';
+            progressDiv.setAttribute('role', 'progressbar');
+            progressDiv.setAttribute('aria-valuemin', '0');
+            progressDiv.setAttribute('aria-valuemax', '100');
+            progressDiv.setAttribute('aria-valuenow', '0');
+            const filledDiv = document.createElement('div');
+            filledDiv.className = 'cmp-progress-filled';
+            progressDiv.appendChild(filledDiv);
+            controlsDiv.appendChild(progressDiv);
+            
+            // Time display
+            const timeDiv = document.createElement('div');
+            timeDiv.className = 'cmp-time';
+            timeDiv.textContent = '0:00 / 0:00';
+            controlsDiv.appendChild(timeDiv);
+            
+            // Volume control
+            const volumeWrap = document.createElement('div');
+            volumeWrap.className = 'cmp-volume-wrap';
+            const volumeInput = document.createElement('input');
+            volumeInput.type = 'range';
+            volumeInput.className = 'cmp-volume';
+            volumeInput.min = '0';
+            volumeInput.max = '1';
+            volumeInput.step = '0.01';
+            volumeInput.value = '1';
+            volumeInput.setAttribute('aria-label', 'Volume');
+            volumeWrap.appendChild(volumeInput);
+            controlsDiv.appendChild(volumeWrap);
+            
+            // Fullscreen button
+            const fullscreenBtn = document.createElement('button');
+            fullscreenBtn.className = 'cmp-fullscreen';
+            fullscreenBtn.setAttribute('aria-label', 'Fullscreen');
+            fullscreenBtn.textContent = '⤢';
+            controlsDiv.appendChild(fullscreenBtn);
+            
+            playerDiv.appendChild(controlsDiv);
+            msgTextDiv.appendChild(playerDiv);
+            
+            // Add caption if present
+            if (data.msg) {
+                const textDiv = document.createElement('div');
+                textDiv.className = 'msg-text';
+                textDiv.style.marginTop = '8px';
+                textDiv.textContent = data.msg || '';
+                msgTextDiv.appendChild(textDiv);
+            }
         } else if (data.message_type === 'file') {
             const fileDiv = document.createElement('div');
             fileDiv.className = 'message-file';
@@ -708,14 +1552,13 @@
             msgTextDiv.appendChild(fileDiv);
             if (data.msg) {
                 const textDiv = document.createElement('div');
-                textDiv.textContent = data.msg;
+                textDiv.className = 'msg-text';
+                textDiv.textContent = data.msg || '';
                 msgTextDiv.appendChild(textDiv);
             }
         } else {
-            // Обычный текст - используем textContent для сохранения переносов строк
-            // Нормализуем текст: убираем начальные переносы строк
+            // Обычный текст - нормализуем и рендерим с <br>
             let text = (data.msg || '').replace(/^\n+/, '').replace(/\n+$/, '');
-            // Убираем начальные пробелы из каждой строки
             const lines = text.split('\n');
             const cleanedLines = [];
             let foundFirstNonEmpty = false;
@@ -727,19 +1570,46 @@
                     cleanedLines.push(line.trimStart());
                 }
             }
-            // Убираем пустые строки в конце
             while (cleanedLines.length > 0 && !cleanedLines[cleanedLines.length - 1].trim()) {
                 cleanedLines.pop();
             }
+            // Set plain text; `pre-wrap` CSS will preserve line breaks
             msgTextDiv.textContent = cleanedLines.join('\n');
         }
-        messagesDiv.appendChild(div);
-        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        // Ensure messagesDiv exists before appending
+        if (!window.messagesDiv) {
+            window.messagesDiv = document.getElementById('messages') || document.querySelector('.messages-container');
+        }
+        if (!window.messagesDiv) {
+            console.error('Cannot append message: messagesDiv not found');
+            return;
+        }
+        window.messagesDiv.appendChild(div);
+        console.log('[DEBUG] Message appended to DOM, calling upgradeNativeMediaElements');
+        try { upgradeNativeMediaElements(div); } catch (e) { console.error('upgrade on addMessage failed', e); }
+        // After upgrading, initialize the new media players
+        try { initializeMediaPlayers(); } catch (e) { console.error('initializeMediaPlayers after addMessage failed', e); }
+        // Render reactions if provided by server in payload
+        const mid = data.id || data.message_id;
+        if (data.reactions) {
+            try { updateMessageReactions(mid, data.reactions); } catch (e) { console.error('updateMessageReactions failed', e); }
+        }
+        // Apply any pending reactions that arrived before this message was added
+        if (pendingReactions[mid]) {
+            try { updateMessageReactions(mid, pendingReactions[mid]); } catch (e) { console.error('apply pending reactions failed', e); }
+            delete pendingReactions[mid];
+        }
+        // Render local timestamps and day separators after adding a message
+        renderTimestampsAndSeparators();
+        // Only auto-scroll if user was already near the bottom
+        if (wasNearBottom) {
+            window.messagesDiv.scrollTop = window.messagesDiv.scrollHeight;
+        }
     }
     
     // Нормализуем текст в существующих сообщениях при загрузке страницы
     function normalizeExistingMessages() {
-        const allMessages = messagesDiv.querySelectorAll('.msg-text');
+        const allMessages = window.messagesDiv.querySelectorAll('.msg-text');
         allMessages.forEach(msgTextEl => {
             if (msgTextEl.textContent && !msgTextEl.querySelector('img, audio, .message-file')) {
                 // Только для текстовых сообщений
@@ -762,15 +1632,94 @@
                 while (cleanedLines.length > 0 && !cleanedLines[cleanedLines.length - 1].trim()) {
                     cleanedLines.pop();
                 }
-                if (msgTextEl.textContent !== cleanedLines.join('\n')) {
-                    msgTextEl.textContent = cleanedLines.join('\n');
+                const finalText = String(cleanedLines.join('\n'));
+                if (msgTextEl.textContent !== finalText) {
+                    msgTextEl.textContent = finalText;
                 }
             }
         });
     }
-    
-    // Нормализуем существующие сообщения при загрузке
-    normalizeExistingMessages();
+
+    // Render timestamps in user's local timezone and insert day separators
+    function renderTimestampsAndSeparators() {
+        const container = document.getElementById('messages');
+        if (!container) return;
+
+        const messages = Array.from(container.querySelectorAll('.message'));
+        let lastDate = null;
+
+        // Remove existing separators
+        Array.from(container.querySelectorAll('.day-separator')).forEach(el => el.remove());
+
+        messages.forEach(msgEl => {
+            const timeSpan = msgEl.querySelector('.msg-time');
+            const ts = timeSpan ? timeSpan.getAttribute('data-timestamp') : null;
+            let localDateStr = null;
+            if (ts) {
+                // Ensure UTC marker
+                const iso = ts.endsWith('Z') ? ts : ts + 'Z';
+                const d = new Date(iso);
+                if (!isNaN(d.getTime())) {
+                    // format time HH:MM
+                    const hh = String(d.getHours()).padStart(2, '0');
+                    const mm = String(d.getMinutes()).padStart(2, '0');
+                    timeSpan.textContent = `${hh}:${mm}`;
+                    // compute local date key
+                    localDateStr = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+                }
+            }
+
+            // handle edited label timestamp if present
+            const editedSpan = msgEl.querySelector('.msg-edited');
+            if (editedSpan) {
+                const ets = editedSpan.getAttribute('data-edited-at');
+                if (ets) {
+                    const eiso = ets.endsWith('Z') ? ets : ets + 'Z';
+                    const ed = new Date(eiso);
+                    if (!isNaN(ed.getTime())) {
+                        const eh = String(ed.getHours()).padStart(2, '0');
+                        const em = String(ed.getMinutes()).padStart(2, '0');
+                        editedSpan.textContent = `(изменено ${eh}:${em})`;
+                    }
+                }
+            }
+
+            // Insert day separator if date changed
+            if (localDateStr && localDateStr !== lastDate) {
+                lastDate = localDateStr;
+                const sep = document.createElement('div');
+                sep.className = 'day-separator';
+                sep.style.textAlign = 'center';
+                sep.style.margin = '10px 0';
+                sep.style.color = '#b9bbbe';
+                sep.style.fontSize = '0.85em';
+                sep.style.position = 'relative';
+                sep.style.display = 'flex';
+                sep.style.alignItems = 'center';
+                sep.style.justifyContent = 'center';
+                sep.style.gap = '10px';
+                sep.innerHTML = `<div style="background:#2f3136;padding:6px 12px;border-radius:12px;">${formatDateLabel(new Date(localDateStr))}</div>`;
+                container.insertBefore(sep, msgEl);
+            }
+        });
+    }
+
+    function formatDateLabel(d) {
+        const today = new Date();
+        const yest = new Date();
+        yest.setDate(today.getDate() - 1);
+
+        function sameDay(a,b){return a.getFullYear()===b.getFullYear()&&a.getMonth()===b.getMonth()&&a.getDate()===b.getDate();}
+
+        if (sameDay(d,today)) return 'Сегодня';
+        if (sameDay(d,yest)) return 'Вчера';
+        // otherwise localized date
+        try {
+            return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+        } catch (e) {
+            return `${d.getDate()}.${d.getMonth()+1}.${d.getFullYear()}`;
+        }
+    }
 
     function showFullscreen(url) {
         document.getElementById('fullscreenImage').src = url;
@@ -791,14 +1740,32 @@
             const modal = document.getElementById('profilePreview');
             modal.innerHTML = html;
             modal.style.display = 'block';
+            // Position modal near click but ensure it stays inside viewport
+            modal.style.transform = 'none';
             if (event) {
-                modal.style.left = (event.clientX + 10) + 'px';
-                modal.style.top = (event.clientY + 10) + 'px';
+                // initial position
+                let left = event.clientX + 10;
+                let top = event.clientY + 10;
+                // clamp
+                const pad = 10;
+                const maxLeft = Math.max(pad, window.innerWidth - modal.offsetWidth - pad);
+                const maxTop = Math.max(pad, window.innerHeight - modal.offsetHeight - pad);
+                if (left > maxLeft) left = maxLeft;
+                if (top > maxTop) top = maxTop;
+                modal.style.left = left + 'px';
+                modal.style.top = top + 'px';
             } else {
                 modal.style.left = '50%';
                 modal.style.top = '50%';
                 modal.style.transform = 'translate(-50%, -50%)';
             }
+
+            // If profile contains audio elements, ensure they stop others when played
+            try {
+                modal.querySelectorAll('audio').forEach(a => {
+                    a.onplay = () => pauseAllOtherAudio(a);
+                });
+            } catch (e) {}
         });
     }
 
@@ -830,7 +1797,7 @@
         
         const channelId = document.getElementById('edit_channel_id').value;
         
-        fetch(`/room/${roomId}/channel/${channelId}/edit`, {
+        fetch(`/room/${window.roomId}/channel/${channelId}/edit`, {
             method: 'POST',
             body: formData
         })
@@ -846,12 +1813,12 @@
 
     function deleteChannel(channelId) {
         showConfirm('Удалить канал', 'Вы уверены, что хотите удалить этот канал? Все сообщения будут удалены.', () => {
-            fetch(`/room/${roomId}/channel/${channelId}/delete`, { method: 'POST' })
+            fetch(`/room/${window.roomId}/channel/${channelId}/delete`, { method: 'POST' })
             .then(r => r.json())
             .then(data => {
                 if (data.success) {
                     if (channelId == {{ active_channel_id }}) {
-                        window.location.href = "{{ url_for('view_room', room_id=room.id) }}";
+                        window.location.href = "{{ url_for('main.view_room', room_id=room.id) }}";
                     } else {
                         location.reload();
                     }
@@ -865,7 +1832,6 @@
     messagesDiv.scrollTop = messagesDiv.scrollHeight;
     
     // ========== СТИЛИЗОВАННЫЕ МОДАЛЬНЫЕ ОКНА ==========
-    let confirmCallback = null;
     
     function showConfirm(title, message, onConfirm, btnText = 'Подтвердить', btnClass = 'danger') {
         document.getElementById('confirmTitle').textContent = title;
@@ -894,34 +1860,7 @@
         document.getElementById('alertModal').style.display = 'none';
     }
     
-    // Закрытие модальных окон по клику на overlay
-    document.getElementById('confirmModal').addEventListener('click', function(e) {
-        if (e.target === this) closeConfirmModal(false);
-    });
-    document.getElementById('alertModal').addEventListener('click', function(e) {
-        if (e.target === this) closeAlertModal();
-    });
-    
     // ========== КОНТЕКСТНОЕ МЕНЮ ==========
-    let contextMenuMessageId = null;
-    let contextMenuMessageElement = null;
-    
-    document.addEventListener('contextmenu', function(e) {
-        const messageEl = e.target.closest('.message');
-        if (messageEl) {
-            e.preventDefault();
-            const msgId = messageEl.getAttribute('data-msg-id');
-            if (msgId) {
-                contextMenuMessageId = parseInt(msgId);
-                contextMenuMessageElement = messageEl;
-                showContextMenu(e.clientX, e.clientY);
-            }
-        }
-    });
-    
-    document.addEventListener('click', function() {
-        hideContextMenu();
-    });
     
     function showContextMenu(x, y) {
         const menu = document.getElementById('messageContextMenu');
@@ -931,11 +1870,19 @@
         
         // Показываем/скрываем пункты меню в зависимости от прав
         const msgEl = contextMenuMessageElement;
-        const canEdit = msgEl && (msgEl.querySelector('.msg-content').dataset.userId == currentUserId);
-        const canDelete = msgEl && (canEdit || userRole == 'owner' || userRole == 'admin');
+        let canEdit = false;
+        try {
+            if (msgEl) {
+                const contentEl = msgEl.querySelector('.message-content') || msgEl.querySelector('.msg-content');
+                if (contentEl && contentEl.dataset && contentEl.dataset.userId) {
+                    canEdit = parseInt(contentEl.dataset.userId) === Number(window.currentUserId);
+                }
+            }
+        } catch (e) { console.error('showContextMenu compute canEdit failed', e); }
+        const canDelete = msgEl && (canEdit || window.userRole == 'owner' || window.userRole == 'admin');
         
-        menu.querySelectorAll('.context-menu-item')[1].style.display = canEdit ? 'flex' : 'none'; // Редактировать
-        menu.querySelectorAll('.context-menu-item')[4].style.display = canDelete ? 'flex' : 'none'; // Удалить
+        menu.querySelectorAll('.context-menu-item')[2].style.display = canEdit ? 'flex' : 'none'; // Редактировать
+        menu.querySelectorAll('.context-menu-item')[6].style.display = canDelete ? 'flex' : 'none'; // Удалить
     }
     
     function hideContextMenu() {
@@ -952,6 +1899,134 @@
             });
         }
         hideContextMenu();
+    }
+
+    function replyToMessageFromMenu() {
+        if (!contextMenuMessageId || !contextMenuMessageElement) return;
+        const textEl = contextMenuMessageElement.querySelector('.msg-text');
+        let snippet = '';
+        if (textEl) {
+            snippet = (textEl.textContent || textEl.innerText || '').trim();
+            snippet = snippet.split('\n')[0].slice(0, 200);
+        }
+        const metaAuthor = contextMenuMessageElement.querySelector('.msg-meta span');
+        const username = metaAuthor ? (metaAuthor.textContent || 'Unknown') : 'Unknown';
+        window.replyTo = { id: contextMenuMessageId, username: username, snippet: snippet };
+        const preview = document.getElementById('replyPreview');
+        const previewContent = document.getElementById('replyPreviewContent');
+        if (preview && previewContent) {
+            previewContent.textContent = username + ': ' + snippet;
+            preview.style.display = 'block';
+        }
+        hideContextMenu();
+    }
+
+    function clearReply() {
+        window.replyTo = null;
+        const preview = document.getElementById('replyPreview');
+        const previewContent = document.getElementById('replyPreviewContent');
+        if (preview) preview.style.display = 'none';
+        if (previewContent) previewContent.textContent = '';
+    }
+
+    // Channel context menu functions
+    function showChannelContextMenu(e, channelId) {
+        console.log('showChannelContextMenu called with channelId:', channelId);
+        e.preventDefault();
+        e.stopPropagation();
+        contextMenuChannelId = channelId;
+        
+        // Get channel data from the channel-item element
+        const channelElement = e.target.closest('.channel-item');
+        if (channelElement) {
+            contextMenuChannelData = {
+                id: channelElement.dataset.channelId,
+                name: channelElement.dataset.channelName,
+                description: channelElement.dataset.channelDescription,
+                emoji: channelElement.dataset.channelEmoji,
+                iconUrl: channelElement.dataset.channelIconUrl
+            };
+            console.log('Channel data:', contextMenuChannelData);
+        }
+        
+        const menu = document.getElementById('channelContextMenu');
+        if (!menu) {
+            console.log('Menu element not found!');
+            return false;
+        }
+        menu.style.display = 'block';
+        menu.style.left = Math.min(e.clientX, window.innerWidth - 220) + 'px';
+        menu.style.top = Math.min(e.clientY, window.innerHeight - 140) + 'px';
+        console.log('Menu displayed at', menu.style.left, menu.style.top);
+        setupChannelMenuClose();
+        return false;
+    }
+
+    function hideChannelContextMenu() {
+        const menu = document.getElementById('channelContextMenu');
+        if (menu) {
+            menu.style.display = 'none';
+            removeChannelMenuOverlay();
+        }
+        contextMenuChannelId = null;
+    }
+
+    function goToChannel(channelId, url) {
+        console.log('goToChannel called with channelId:', channelId, 'url:', url);
+        try { if (window.socket && channelId) window.socket.emit('join', {channel_id: Number(channelId)}); } catch (e) { console.error('Socket join error:', e); }
+        // navigate to channel URL
+        location.href = url;
+    }
+
+    // Close channel context menu when clicking outside
+    function setupChannelMenuClose() {
+        const menu = document.getElementById('channelContextMenu');
+        if (!menu) return;
+        
+        // Remove existing overlay if any
+        const existingOverlay = document.getElementById('channelMenuOverlay');
+        if (existingOverlay) existingOverlay.remove();
+        
+        // Create invisible overlay to catch clicks
+        const overlay = document.createElement('div');
+        overlay.id = 'channelMenuOverlay';
+        overlay.style.position = 'fixed';
+        overlay.style.top = '0';
+        overlay.style.left = '0';
+        overlay.style.width = '100%';
+        overlay.style.height = '100%';
+        overlay.style.zIndex = '999'; // Just below menu which is 1000
+        overlay.style.cursor = 'default';
+        
+        overlay.addEventListener('click', function(e) {
+            console.log('Overlay clicked, closing menu');
+            hideChannelContextMenu();
+        });
+        
+        document.body.appendChild(overlay);
+    }
+    
+    function removeChannelMenuOverlay() {
+        const overlay = document.getElementById('channelMenuOverlay');
+        if (overlay) overlay.remove();
+    }
+
+    function editChannelFromContext() {
+        if (!contextMenuChannelId) return;
+        hideChannelContextMenu();
+        editChannel(
+            contextMenuChannelData.id,
+            contextMenuChannelData.name,
+            contextMenuChannelData.description,
+            contextMenuChannelData.emoji,
+            contextMenuChannelData.iconUrl
+        );
+    }
+
+    function deleteChannelFromContext() {
+        if (!contextMenuChannelId) return;
+        hideChannelContextMenu();
+        deleteChannel(contextMenuChannelId);
     }
     
     function editMessage() {
@@ -1003,7 +2078,45 @@
         .then(data => {
             if (data.success) {
                 modal.remove();
-                // Сообщение обновится через socket.on('message_edited')
+
+                // Immediately update the message locally for the editor
+                const msgEl = document.querySelector(`[data-msg-id="${messageId}"]`);
+                if (msgEl) {
+                    const textEl = msgEl.querySelector('.msg-text');
+                    if (textEl) {
+                        textEl.innerHTML = '';
+                        // preserve newlines by setting textContent; CSS will render breaks
+                        textEl.textContent = data.content || newText;
+                        normalizeMessageText(msgEl);
+                    }
+
+                    const metaEl = msgEl.querySelector('.msg-meta');
+                    if (metaEl) {
+                        // Remove existing edited marker
+                        const oldEdited = metaEl.querySelector('.msg-edited');
+                        if (oldEdited) oldEdited.remove();
+                        if (data.edited_at_iso) {
+                            const editedSpan = document.createElement('span');
+                            editedSpan.className = 'msg-edited';
+                            editedSpan.setAttribute('data-edited-at', data.edited_at_iso);
+                            editedSpan.style.color = '#72767d';
+                            editedSpan.style.fontSize = '0.85em';
+                            editedSpan.style.marginLeft = '5px';
+                            editedSpan.textContent = '(изменено)';
+                            metaEl.appendChild(editedSpan);
+                        }
+                    }
+
+                    // Update reactions if returned
+                    if (data.reactions) {
+                        updateMessageReactions(data.message_id, data.reactions);
+                    }
+
+                    // Re-render timestamps and separators to reflect edited time
+                    renderTimestampsAndSeparators();
+                }
+                
+                // Other clients will receive socket 'message_edited' and update accordingly
             } else {
                 showAlert('Ошибка: ' + (data.error || 'Неизвестная ошибка'));
             }
@@ -1115,7 +2228,6 @@
     
     
     // ========== РЕАКЦИИ ==========
-    const commonEmojis = ['👍', '❤️', '😂', '😮', '😢', '🙏', '🔥', '👏', '🎉', '💯', '😍', '🤔', '😴', '🤮', '💩'];
     
     function showReactionPicker() {
         if (!contextMenuMessageId) return;
@@ -1136,8 +2248,22 @@
         });
         
         const menu = document.getElementById('messageContextMenu');
-        picker.style.left = menu.style.left;
-        picker.style.top = (parseInt(menu.style.top) + 150) + 'px';
+        let left = parseInt(menu.style.left);
+        let top = parseInt(menu.style.top) + 150;
+        
+        // Ensure picker stays within viewport on mobile
+        const pickerWidth = 320;
+        const pickerHeight = 320;
+        
+        if (left + pickerWidth > window.innerWidth) {
+            left = window.innerWidth - pickerWidth - 10;
+        }
+        if (top + pickerHeight > window.innerHeight) {
+            top = window.innerHeight - pickerHeight - 10;
+        }
+        
+        picker.style.left = left + 'px';
+        picker.style.top = top + 'px';
         picker.style.display = 'block';
     }
     
@@ -1157,14 +2283,16 @@
     
     function updateMessageReactions(messageId, reactions) {
         const msgEl = document.querySelector(`[data-msg-id="${messageId}"]`);
-        if (!msgEl) return;
-        
+        if (!msgEl) return false;
+
         let reactionsEl = msgEl.querySelector('.message-reactions');
         if (!reactionsEl) {
             reactionsEl = document.createElement('div');
             reactionsEl.className = 'message-reactions';
-            const msgContent = msgEl.querySelector('.msg-content');
-            msgContent.appendChild(reactionsEl);
+            // prefer .msg-bubble, fall back to .message-content, then legacy .msg-content
+            const container = msgEl.querySelector('.msg-bubble') || msgEl.querySelector('.message-content') || msgEl.querySelector('.msg-content');
+            if (!container) return false;
+            container.appendChild(reactionsEl);
         }
         
         reactionsEl.innerHTML = '';
@@ -1186,14 +2314,28 @@
             `;
             reactionsEl.appendChild(reaction);
         }
+        return true;
     }
     
-    socket.on('reactions_updated', function(data) {
-        updateMessageReactions(data.message_id, data.reactions);
-    });
+    (function bindReactionsUpdated() {
+        if (socket) {
+            socket.on('reactions_updated', function(data) {
+                console.debug('reactions_updated received', data);
+                // If the message element isn't present yet, queue the reactions
+                const ok = updateMessageReactions(data.message_id, data.reactions);
+                if (!ok) {
+                    pendingReactions[data.message_id] = data.reactions;
+                }
+            });
+        } else {
+            setTimeout(bindReactionsUpdated, 50);
+        }
+    })();
     
     // Обработчик редактирования сообщения
-    socket.on('message_edited', function(data) {
+    (function bindMessageEdited() {
+        if (socket) {
+            socket.on('message_edited', function(data) {
         const msgEl = document.querySelector(`[data-msg-id="${data.message_id}"]`);
         if (msgEl) {
             const textEl = msgEl.querySelector('.msg-text');
@@ -1204,17 +2346,20 @@
                 normalizeMessageText(msgEl);
             }
             const metaEl = msgEl.querySelector('.msg-meta');
-            if (metaEl && data.edited_at) {
-                // Удаляем старую метку если есть
-                const oldEdited = metaEl.querySelector('span[style*="изменено"]');
+            if (metaEl && data.edited_at_iso) {
+                // Remove old edited marker if present
+                const oldEdited = metaEl.querySelector('.msg-edited');
                 if (oldEdited) oldEdited.remove();
-                
                 const editedSpan = document.createElement('span');
+                editedSpan.className = 'msg-edited';
+                editedSpan.setAttribute('data-edited-at', data.edited_at_iso);
                 editedSpan.style.color = '#72767d';
                 editedSpan.style.fontSize = '0.85em';
                 editedSpan.style.marginLeft = '5px';
                 editedSpan.textContent = '(изменено)';
                 metaEl.appendChild(editedSpan);
+                // Re-render timestamps to show edited time label
+                renderTimestampsAndSeparators();
             }
             // Обновляем реакции
             if (data.reactions) {
@@ -1226,7 +2371,11 @@
                 contextMenuMessageElement = msgEl;
             }
         }
-    });
+            });
+        } else {
+            setTimeout(bindMessageEdited, 50);
+        }
+    })();
     
     // ========== СТИКЕРЫ ==========
     function loadStickerPacks() {
@@ -1560,12 +2709,19 @@
         if (!e.target.closest('#emojiPicker') && !e.target.closest('.context-menu-item')) {
             document.getElementById('emojiPicker').style.display = 'none';
         }
+        // Hide context menus when clicking outside
+        if (!e.target.closest('.context-menu')) {
+            try { hideContextMenu(); } catch (e) {}
+            try { hideChannelContextMenu(); } catch (e) {}
+        }
     });
     
     function inviteToRoom(roomId) {
+        console.log('inviteToRoom called with roomId:', roomId);
         fetch(`/room/${roomId}/invite`, { method: 'POST' })
         .then(r => r.json())
         .then(data => {
+            console.log('Invite response:', data);
             if (data.success) {
                 navigator.clipboard.writeText(data.invite_url).then(() => {
                     showAlert('Ссылка-приглашение скопирована в буфер обмена!');
@@ -1590,6 +2746,290 @@
             }
         });
     }
+    
+    // Initialize custom media players
+    function formatTime(sec) {
+        if (!isFinite(sec)) return '0:00';
+        const s = Math.floor(sec % 60).toString().padStart(2, '0');
+        const m = Math.floor(sec / 60);
+        return m + ':' + s;
+    }
+
+    function initializeMediaPlayers() {
+        console.log('[DEBUG] initializeMediaPlayers called');
+        const players = document.querySelectorAll('.custom-media-player');
+        console.log('[DEBUG] Found', players.length, 'custom media player containers');
+        // initialize any container that looks like a custom media player
+        document.querySelectorAll('.custom-media-player').forEach((container, idx) => {
+            if (!container) {
+                console.log(`[DEBUG] Container ${idx}: null or undefined`);
+                return;
+            }
+            // Check if already initialized
+            if (container.dataset && container.dataset.cmpInitialized === '1') {
+                console.log(`[DEBUG] Container ${idx}: already initialized (has cmpInitialized flag), skipping`);
+                return; // avoid double-init
+            }
+            const media = container.querySelector('.cmp-media');
+            const playBtn = container.querySelector('.cmp-play');
+            const progress = container.querySelector('.cmp-progress');
+            const filled = container.querySelector('.cmp-progress-filled');
+            const timeEl = container.querySelector('.cmp-time');
+            const volInput = container.querySelector('.cmp-volume');
+            const fullscreenBtn = container.querySelector('.cmp-fullscreen');
+
+            if (!media) {
+                console.log(`[DEBUG] Container ${idx}: no .cmp-media element found`);
+                return;
+            }
+            const src = media.src || (media.querySelector('source') && media.querySelector('source').src);
+            console.log(`[DEBUG] Initializing media player ${idx}: <${media.tagName}> src="${src}"`);
+            media.controls = false;
+
+            function updateTime() {
+                const cur = formatTime(media.currentTime || 0);
+                const dur = formatTime(media.duration || 0);
+                if (timeEl) timeEl.textContent = cur + ' / ' + dur;
+                if (filled && media.duration) {
+                    const pct = (media.currentTime / media.duration) * 100;
+                    filled.style.width = pct + '%';
+                    progress.setAttribute('aria-valuenow', Math.floor(pct));
+                }
+            }
+
+            playBtn && playBtn.addEventListener('click', function(e){
+                e.preventDefault();
+                if (media.paused) { media.play(); playBtn.textContent = '⏸'; }
+                else { media.pause(); playBtn.textContent = '▶'; }
+            });
+
+            media.addEventListener('play', () => { if (playBtn) playBtn.textContent = '⏸'; });
+            media.addEventListener('pause', () => { if (playBtn) playBtn.textContent = '▶'; });
+            media.addEventListener('timeupdate', updateTime);
+            media.addEventListener('loadedmetadata', updateTime);
+            media.addEventListener('ended', () => { if (playBtn) playBtn.textContent = '▶'; });
+            
+            // Safari compatibility: update time more frequently
+            media.addEventListener('play', () => {
+                const timer = setInterval(() => {
+                    if (media.paused) {
+                        clearInterval(timer);
+                    } else {
+                        updateTime();
+                    }
+                }, 500);
+            });
+
+            // Seek on progress click
+            if (progress) {
+                progress.addEventListener('click', function(e){
+                    const rect = progress.getBoundingClientRect();
+                    const x = (e.clientX - rect.left);
+                    const pct = x / rect.width;
+                    if (media.duration) media.currentTime = pct * media.duration;
+                    updateTime();
+                });
+            }
+
+            // Volume control
+            if (volInput) {
+                volInput.addEventListener('input', function(){
+                    media.volume = parseFloat(volInput.value);
+                });
+            }
+
+            // Fullscreen for video
+            if (fullscreenBtn) {
+                fullscreenBtn.addEventListener('click', function(){
+                    const video = media;
+                    if (video.requestFullscreen) video.requestFullscreen();
+                    else if (video.webkitEnterFullscreen) video.webkitEnterFullscreen();
+                });
+            }
+
+            // Prevent accidental dragging on mobile
+            ['touchmove','touchstart'].forEach(ev => container.addEventListener(ev, e => e.stopPropagation()));
+            // pause other players when this one starts
+            media.addEventListener('play', () => pauseAllOtherMedia(media));
+            
+            // Load metadata immediately so duration shows before play
+            media.load();
+            // Also try to get duration from mediaElement if available
+            if (media.duration && isFinite(media.duration)) {
+                updateTime();
+            }
+            
+            // For browsers that don't immediately have duration, wait for loadedmetadata
+            const metadataHandler = () => {
+                console.log(`[DEBUG] Player ${idx}: metadata event fired, duration=${media.duration}`);
+                updateTime();
+            };
+            media.addEventListener('loadedmetadata', metadataHandler);
+            media.addEventListener('canplay', metadataHandler);
+            media.addEventListener('durationchange', metadataHandler);
+            
+            // Safari polyfill: check duration periodically until it's loaded
+            let metadataCheckCount = 0;
+            const metadataChecker = setInterval(() => {
+                metadataCheckCount++;
+                if (media.duration && isFinite(media.duration)) {
+                    console.log(`[DEBUG] Player ${idx}: duration detected via polling (attempt ${metadataCheckCount}): ${media.duration}`);
+                    updateTime();
+                    clearInterval(metadataChecker);
+                } else if (metadataCheckCount > 20) {
+                    // Give up after 2 seconds of checking
+                    console.log(`[DEBUG] Player ${idx}: giving up on metadata loading after ${metadataCheckCount} attempts`);
+                    clearInterval(metadataChecker);
+                }
+            }, 100);
+            
+            container.dataset.cmpInitialized = '1';
+            console.debug && console.debug('initialized cmp for', container, media);
+        });
+    }
+
+    // Run upgrade & init on DOMContentLoaded and after dynamic content changes
+    function runUpgradeAndInit() {
+        console.log('[DEBUG] runUpgradeAndInit called');
+        try { upgradeNativeMediaElements(); } catch (e) { console.error(e); }
+        try { initializeMediaPlayers(); } catch (e) { console.error(e); }
+    }
+
+    // NOTE: The main initialization happens in the initializeApp section above.
+    // This is kept as a helper function for reinitializing after dynamic content.
+
+    // Upgrade native <audio> or <video> elements into our custom player wrapper
+    function upgradeNativeMediaElements(root=document) {
+        // audio
+        root.querySelectorAll('audio.message-audio, audio').forEach(orig => {
+            // skip if already inside custom player or already converted
+            if (orig.closest('.custom-media-player')) return;
+            try {
+                const container = document.createElement('div');
+                container.className = 'custom-media-player';
+                container.setAttribute('data-type', 'audio');
+
+                // create fresh audio element and copy src (avoids clone issues)
+                const media = document.createElement('audio');
+                media.className = 'cmp-media';
+                media.preload = 'metadata';
+                media.playsInline = true;
+                // copy src from source or from orig
+                const srcEl = orig.querySelector && orig.querySelector('source');
+                const src = (srcEl && srcEl.src) || orig.currentSrc || orig.src || (orig.getAttribute && orig.getAttribute('src')) || '';
+                if (src) {
+                    const s = document.createElement('source');
+                    s.src = src;
+                    // try to preserve type if available
+                    if (srcEl && srcEl.type) s.type = srcEl.type;
+                    media.appendChild(s);
+                }
+
+                // build controls
+                const controls = document.createElement('div');
+                controls.className = 'cmp-controls';
+                controls.innerHTML = '<button class="cmp-play" aria-label="Play">▶</button>' +
+                    '<div class="cmp-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="cmp-progress-filled"></div></div>' +
+                    '<div class="cmp-time">0:00 / 0:00</div>' +
+                    '<div class="cmp-volume-wrap"><input type="range" class="cmp-volume" min="0" max="1" step="0.01" value="1" aria-label="Volume"></div>';
+
+                container.appendChild(media);
+                container.appendChild(controls);
+
+                orig.parentNode.replaceChild(container, orig);
+                // ensure metadata is loaded
+                try { media.load(); } catch (e) {}
+            } catch (e) { console.error('upgrade audio failed', e); }
+        });
+
+        // video
+        root.querySelectorAll('video').forEach(orig => {
+            if (orig.closest('.custom-media-player')) return;
+            try {
+                const container = document.createElement('div');
+                container.className = 'custom-media-player video-player';
+                container.setAttribute('data-type', 'video');
+
+                const media = document.createElement('video');
+                media.className = 'cmp-media';
+                media.preload = 'metadata';
+                media.playsInline = true;
+                const srcEl = orig.querySelector && orig.querySelector('source');
+                const src = (srcEl && srcEl.src) || orig.currentSrc || orig.src || (orig.getAttribute && orig.getAttribute('src')) || '';
+                if (src) {
+                    const s = document.createElement('source');
+                    s.src = src;
+                    if (srcEl && srcEl.type) s.type = srcEl.type;
+                    media.appendChild(s);
+                }
+
+                const controls = document.createElement('div');
+                controls.className = 'cmp-controls';
+                controls.innerHTML = '<button class="cmp-play" aria-label="Play">▶</button>' +
+                    '<div class="cmp-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="cmp-progress-filled"></div></div>' +
+                    '<div class="cmp-time">0:00 / 0:00</div>' +
+                    '<div class="cmp-volume-wrap"><input type="range" class="cmp-volume" min="0" max="1" step="0.01" value="1" aria-label="Volume"></div>' +
+                    '<button class="cmp-fullscreen" aria-label="Fullscreen">⤢</button>';
+
+                container.appendChild(media);
+                container.appendChild(controls);
+
+                orig.parentNode.replaceChild(container, orig);
+                // ensure metadata is loaded
+                try { media.load(); } catch (e) {}
+            } catch (e) { console.error('upgrade video failed', e); }
+        });
+
+        // After upgrade, initialize players in the new containers
+        initializeMediaPlayers();
+    }
+
+    // Watch for new messages added to container and upgrade their media
+    try {
+        const messagesNode = document.getElementById('messages');
+        if (messagesNode) {
+            const obs = new MutationObserver(muts => {
+                muts.forEach(m => {
+                    if (m.addedNodes && m.addedNodes.length) {
+                        m.addedNodes.forEach(n => {
+                            if (n.querySelector) upgradeNativeMediaElements(n);
+                        });
+                    }
+                });
+            });
+            obs.observe(messagesNode, { childList: true, subtree: true });
+        }
+    } catch (e) { console.error('media observer setup failed', e); }
+
+    // === Явное назначение функций на window для доступа из onclick ===
+    window.sendMessage = sendMessage;
+    window.addFilePreview = addFilePreview;
+    window.removeFilePreview = removeFilePreview;
+    window.updateFilePreviewArea = updateFilePreviewArea;
+    window.uploadAndSendFile = uploadAndSendFile;
+    window.deleteMessage = deleteMessage;
+    window.showFullscreen = showFullscreen;
+    window.previewFile = previewFile;
+    window.showProfile = showProfile;
+    window.editChannel = editChannel;
+    window.saveChannelEdit = saveChannelEdit;
+    window.deleteChannel = deleteChannel;
+    window.inviteToRoom = inviteToRoom;
+    window.showConfirm = showConfirm;
+    window.closeConfirmModal = closeConfirmModal;
+    window.showAlert = showAlert;
+    window.closeAlertModal = closeAlertModal;
+    window.showContextMenu = showContextMenu;
+    window.hideContextMenu = hideContextMenu;
+    window.copyMessage = copyMessage;
+    window.editMessage = editMessage;
+    window.forwardMessage = forwardMessage;
+    window.deleteMessageFromMenu = deleteMessageFromMenu;
+    window.toggleReaction = toggleReaction;
+    window.toggleStickerPicker = toggleStickerPicker;
+    window.showReactionPicker = showReactionPicker;
+    window.saveEditedMessage = saveEditedMessage;
+    window.toggleEmojiPicker = toggleEmojiPicker;
 </script>
 
 {% endblock %}

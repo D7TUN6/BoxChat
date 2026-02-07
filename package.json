@@ -1,0 +1,23 @@
+{
+  "name": "boxchat",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/D7TUN6/TheComBoxMSGR.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/D7TUN6/TheComBoxMSGR/issues"
+  },
+  "homepage": "https://github.com/D7TUN6/TheComBoxMSGR#readme",
+  "dependencies": {
+    "socket.io-client": "^4.0.1"
+  }
+}
