@@ -18,7 +18,7 @@ _defaults = {
     'MAX_CONTENT_LENGTH': 50 * 1024 * 1024,
     'ALLOWED_EXTENSIONS': [
         'png', 'jpg', 'jpeg', 'gif', 'webp',
-        'mp3', 'ogg', 'flac', 'wav',
+        'mp3', 'ogg', 'flac', 'wav', 'midi', 'mid',
         'mp4', 'webm', 'mov', 'avi', 'mkv',
         'txt', 'py', 'js', 'html', 'css', 'json', 'xml', 'md', 'pdf', 'zip', 'rar'
     ],
