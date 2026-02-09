@@ -4,7 +4,7 @@ Socket.IO event handlers
 from flask_socketio import join_room, leave_room, emit
 from flask_login import current_user
 from app.extensions import db, socketio
-from app.models import Message, Member, Room, Channel
+from app.models import Message, Member, Room, Channel, ReadMessage, User
 from datetime import datetime
 import os
 
@@ -25,9 +25,65 @@ def on_join(data):
         pass
 
 
+@socketio.on('connect')
+def on_connect():
+    """Handle new socket connection: mark user online and notify rooms"""
+    try:
+        if hasattr(current_user, 'is_authenticated') and current_user.is_authenticated:
+            # Respect user's hide_status preference
+            if getattr(current_user, 'hide_status', False):
+                current_user.presence_status = 'hidden'
+            else:
+                current_user.presence_status = 'online'
+            current_user.last_seen = None
+            db.session.commit()
+            # Notify members in all channels of the rooms user is member of
+            memberships = Member.query.filter_by(user_id=current_user.id).all()
+            for m in memberships:
+                # For each channel in the room, emit presence update so clients viewing channel update status
+                for ch in m.room.channels:
+                    socketio.emit('presence_updated', {
+                        'user_id': current_user.id,
+                        'username': current_user.username,
+                        'status': current_user.presence_status
+                    }, room=str(ch.id), skip_sid=None)  # Include sender in emission
+    except Exception:
+        db.session.rollback()
+        pass
+
+
+@socketio.on('disconnect')
+def on_disconnect():
+    """Mark user offline and notify rooms"""
+    try:
+        if hasattr(current_user, 'is_authenticated') and current_user.is_authenticated:
+            # Respect hide_status: if hidden, keep hidden; otherwise set offline
+            if getattr(current_user, 'hide_status', False):
+                current_user.presence_status = 'hidden'
+            else:
+                current_user.presence_status = 'offline'
+            current_user.last_seen = datetime.utcnow()
+            db.session.commit()
+            memberships = Member.query.filter_by(user_id=current_user.id).all()
+            for m in memberships:
+                for ch in m.room.channels:
+                    socketio.emit('presence_updated', {
+                        'user_id': current_user.id,
+                        'username': current_user.username,
+                        'status': current_user.presence_status,
+                        'last_seen_iso': current_user.last_seen.strftime('%Y-%m-%dT%H:%M:%SZ') if current_user.last_seen else None
+                    }, room=str(ch.id), skip_sid=None)  # Include sender in emission
+    except Exception:
+        db.session.rollback()
+        pass
+
+
 @socketio.on('send_message')
 def handle_send_message(data):
     """Handle incoming message"""
+    import sys
+    print(f"[handle_send_message] START - from user {current_user.id} ({current_user.username})", file=sys.stderr)
+    
     channel_id = data.get('channel_id')
     content = data.get('msg', '')
     room_id = data.get('room_id')
@@ -153,6 +209,7 @@ def handle_send_message(data):
         reply_payload = (reply_to if reply_to else None)
 
     # Broadcast to channel (include server-built reply metadata)
+    print(f"[handle_send_message] Broadcasting receive_message to channel {channel_id}", file=sys.stderr)
     emit('receive_message', {
         'id': msg.id,
         'user_id': current_user.id,
@@ -168,3 +225,60 @@ def handle_send_message(data):
         'reactions': reactions_data,
         'reply_to': reply_payload
     }, room=str(channel_id))
+
+    # Send per-user notifications and unread counts to members' personal rooms
+    try:
+        members = Member.query.filter_by(room_id=room_id).all()
+        print(f"[handle_send_message] Sending notifications to {len(members)} members", file=sys.stderr)
+        for m in members:
+            uid = m.user_id
+            # skip sender
+            if uid == current_user.id:
+                continue
+
+            # compute unread count for this user in this channel
+            # Count all messages after last_read_message_id, excluding the current user's own messages
+            unread_count = 0
+            rm = ReadMessage.query.filter_by(user_id=uid, channel_id=channel_id).first()
+            if rm and rm.last_read_message_id:
+                # Messages after what they've read
+                unread_count = Message.query.filter(
+                    Message.channel_id == channel_id,
+                    Message.id > rm.last_read_message_id
+                ).count()
+            else:
+                # No reading history, count all messages
+                unread_count = Message.query.filter(
+                    Message.channel_id == channel_id
+                ).count()
+
+            # Build small snippet for notification
+            snippet = (content or '')
+            if snippet:
+                snippet = snippet.strip().split('\n')[0][:140]
+
+            payload = {
+                'room_id': room_id,
+                'channel_id': channel_id,
+                'message_id': msg.id,
+                'from_user': current_user.username,
+                'from_user_id': current_user.id,
+                'snippet': snippet,
+                'unread_count': unread_count
+            }
+
+            # Emit a generic notification event to the user's personal room
+            print(f"[handle_send_message] Sending notification to user {uid}: {payload}", file=sys.stderr)
+            socketio.emit('message_notification', payload, room=f"user_{uid}")
+
+            # For DM rooms, keep the legacy dashboard handler name
+            try:
+                if room.type == 'dm':
+                    socketio.emit('new_dm_message', {'room_id': room.id}, room=f"user_{uid}")
+            except Exception:
+                pass
+    except Exception:
+        db.session.rollback()
+        pass
+    
+    print(f"[handle_send_message] COMPLETE", file=sys.stderr)

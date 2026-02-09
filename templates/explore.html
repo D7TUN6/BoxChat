@@ -92,5 +92,73 @@ function banUser(userId) {
         }
     });
 }
+
+// Listen for message notifications on explore page too
+try {
+    let exploreSocket = null;
+    
+    // Get or create socket
+    if (typeof io !== 'undefined') {
+        // Use the global socket if it exists, otherwise create a new one
+        exploreSocket = window.socket || io();
+    }
+    
+    if (exploreSocket) {
+        // Ensure we're listening for notifications
+        exploreSocket.on('connect', function() {
+            console.debug('[explore] Socket connected');
+            try { exploreSocket.emit('join', {channel_id: null}); } catch (e) { console.debug('[explore] join emit failed', e); }
+            
+            // Request notification permission
+            if (window.Notification && Notification.permission === 'default') {
+                try {
+                    Notification.requestPermission().then(perm => {
+                        console.debug('[explore] Notification permission:', perm);
+                    });
+                } catch(e) { console.debug('[explore] requestPermission failed', e); }
+            }
+        });
+
+        exploreSocket.on('message_notification', function(data) {
+            console.debug('[explore] message_notification received:', data);
+            try {
+                const title = data.from_user || 'New message';
+                const body = data.snippet || 'New message';
+                
+                if (window.Notification && Notification.permission === 'granted') {
+                    try {
+                        const notifOptions = {
+                            body: body,
+                            icon: '/static/img/logo-192.png',
+                            tag: 'boxchat-' + data.room_id + '-' + data.channel_id,
+                            requireInteraction: false
+                        };
+                        const n = new Notification(title, notifOptions);
+                        
+                        n.onclick = function() {
+                            window.focus();
+                            n.close();
+                            // Navigate to the room/channel with the message
+                            if (data.room_id && data.channel_id) {
+                                window.location.href = '/room/' + data.room_id + '?channel_id=' + data.channel_id;
+                            } else if (data.room_id) {
+                                window.location.href = '/room/' + data.room_id;
+                            }
+                        };
+                    } catch (e) { console.error('[explore] Notification creation failed', e); }
+                } else if (window.Notification) {
+                    console.debug('[explore] Notification permission not granted, current:', Notification.permission);
+                }
+            } catch (e) { console.error('[explore] message_notification handler failed', e); }
+        });
+        
+        // Also listen on disconnect to know when we're offline
+        exploreSocket.on('disconnect', function() {
+            console.debug('[explore] Socket disconnected');
+        });
+    } else {
+        console.warn('[explore] Socket not available');
+    }
+} catch (e) { console.error('[explore] notification setup failed', e); }
 </script>
 {% endblock %}

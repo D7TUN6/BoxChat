@@ -12,7 +12,8 @@ socketio = SocketIO(
     cors_allowed_origins='*',
     ping_timeout=60,
     ping_interval=25,
-    manage_transports=False,
+    manage_transports=True,
+    path='socket.io',
     engineio_logger=False,
     socketio_logger=False
 )

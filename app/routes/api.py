@@ -108,6 +108,15 @@ def settings():
         current_user.bio = request.form.get('bio')
         current_user.privacy_searchable = 'privacy_searchable' in request.form
         current_user.privacy_listable = 'privacy_listable' in request.form
+        # Presence hiding
+        if 'hide_status' in request.form:
+            current_user.hide_status = True
+            current_user.presence_status = 'hidden'
+        else:
+            current_user.hide_status = False
+            # Set to online if not hidden
+            if current_user.presence_status != 'away':
+                current_user.presence_status = 'online'
         
         if 'avatar_file' in request.files:
             file = request.files['avatar_file']
@@ -117,6 +126,18 @@ def settings():
                     current_user.avatar_url = filepath
         
         db.session.commit()
+        
+        # Notify all members of status change
+        from app.models import Member
+        memberships = Member.query.filter_by(user_id=current_user.id).all()
+        for m in memberships:
+            for ch in m.room.channels:
+                socketio.emit('presence_updated', {
+                    'user_id': current_user.id,
+                    'username': current_user.username,
+                    'status': current_user.presence_status
+                }, room=str(ch.id), skip_sid=None)
+        
         flash('Настройки обновлены')
     
     return render_template('settings.html', user=current_user)
@@ -223,6 +244,35 @@ def room_settings(room_id):
         return redirect(url_for('main.view_room', room_id=room_id))
     
     return render_template('room_settings.html', room=room)
+
+
+@api_bp.route('/channel/<int:channel_id>/mark_read', methods=['POST'])
+@login_required
+def mark_channel_read(channel_id):
+    """Mark channel as read for current user (set last_read to last message)"""
+    from app.models import Channel, Message, ReadMessage
+    ch = Channel.query.get_or_404(channel_id)
+    last_msg = Message.query.filter_by(channel_id=channel_id).order_by(Message.id.desc()).first()
+    if not last_msg:
+        return jsonify({'success': True, 'message': 'no_messages'})
+
+    rm = ReadMessage.query.filter_by(user_id=current_user.id, channel_id=channel_id).first()
+    if rm:
+        rm.last_read_message_id = last_msg.id
+        rm.last_read_at = datetime.utcnow()
+    else:
+        rm = ReadMessage(user_id=current_user.id, channel_id=channel_id, last_read_message_id=last_msg.id)
+        db.session.add(rm)
+    db.session.commit()
+
+    # notify others in channel about read status
+    socketio.emit('read_status_updated', {
+        'user_id': current_user.id,
+        'username': current_user.username,
+        'channel_id': channel_id
+    }, room=str(channel_id))
+
+    return jsonify({'success': True})
 
 
 @api_bp.route('/room/<int:room_id>/avatar/delete', methods=['POST'])
@@ -642,3 +692,231 @@ def get_accessible_channels():
             })
     
     return jsonify({'channels': channels_list})
+
+
+# --- DESKTOP CLIENT API ENDPOINTS ---
+
+@api_bp.route('/api/v1/user/me', methods=['GET'])
+@login_required
+def get_current_user():
+    """Get current user info - for desktop clients"""
+    return jsonify({
+        'id': current_user.id,
+        'username': current_user.username,
+        'email': current_user.email,
+        'avatar_url': current_user.avatar_url or 'https://via.placeholder.com/50',
+        'bio': current_user.bio or '',
+        'presence_status': current_user.presence_status or 'offline',
+        'hide_status': current_user.hide_status or False,
+        'is_superuser': current_user.is_superuser or False
+    })
+
+
+@api_bp.route('/api/v1/rooms', methods=['GET'])
+@login_required
+def get_user_rooms():
+    """Get all rooms the user is member of - for desktop clients"""
+    rooms_data = []
+    rooms = Room.query.join(Member).filter(Member.user_id == current_user.id).all()
+    
+    for room in rooms:
+        room_dict = {
+            'id': room.id,
+            'name': room.name,
+            'type': room.type,
+            'description': room.description,
+            'avatar_url': room.avatar_url,
+            'member_count': len(room.members),
+            'channels': []
+        }
+        
+        for channel in room.channels:
+            channel_dict = {
+                'id': channel.id,
+                'name': channel.name,
+                'description': channel.description,
+                'icon_emoji': channel.icon_emoji,
+                'icon_image_url': channel.icon_image_url
+            }
+            room_dict['channels'].append(channel_dict)
+        
+        rooms_data.append(room_dict)
+    
+    return jsonify({'rooms': rooms_data})
+
+
+@api_bp.route('/api/v1/channel/<int:channel_id>/messages', methods=['GET'])
+@login_required
+def get_channel_messages(channel_id):
+    """Get messages from a channel - for desktop clients"""
+    channel = Channel.query.get_or_404(channel_id)
+    room = channel.room
+    
+    # Check access
+    member = Member.query.filter_by(user_id=current_user.id, room_id=room.id).first()
+    if not member:
+        return jsonify({'error': 'Access denied'}), 403
+    
+    limit = request.args.get('limit', 50, type=int)
+    offset = request.args.get('offset', 0, type=int)
+    
+    messages = Message.query.filter_by(channel_id=channel_id).order_by(
+        Message.timestamp.desc()
+    ).limit(limit).offset(offset).all()
+    
+    messages_data = []
+    for msg in reversed(messages):
+        reactions = {}
+        for reaction in msg.reactions:
+            if reaction.emoji not in reactions:
+                reactions[reaction.emoji] = []
+            reactions[reaction.emoji].append(reaction.user.username)
+        
+        msg_dict = {
+            'id': msg.id,
+            'user_id': msg.user_id,
+            'username': msg.user.username if msg.user else 'Unknown',
+            'avatar_url': msg.user.avatar_url if msg.user else None,
+            'content': msg.content,
+            'message_type': msg.message_type,
+            'timestamp': msg.timestamp.isoformat(),
+            'edited_at': msg.edited_at.isoformat() if msg.edited_at else None,
+            'file_url': msg.file_url,
+            'file_name': msg.file_name,
+            'file_size': msg.file_size,
+            'reactions': reactions,
+            'reply_to_id': msg.reply_to_id
+        }
+        messages_data.append(msg_dict)
+    
+    return jsonify({'messages': messages_data, 'count': len(messages_data)})
+
+
+@api_bp.route('/api/v1/user/<int:user_id>/profile', methods=['GET'])
+@login_required
+def get_user_profile(user_id):
+    """Get user profile - for desktop clients"""
+    user = User.query.get_or_404(user_id)
+    return jsonify({
+        'id': user.id,
+        'username': user.username,
+        'avatar_url': user.avatar_url or 'https://via.placeholder.com/50',
+        'bio': user.bio or '',
+        'presence_status': user.presence_status or 'offline' if not user.hide_status else 'hidden',
+        'last_seen': user.last_seen.isoformat() if user.last_seen else None
+    })
+
+
+@api_bp.route('/api/v1/search/users', methods=['GET'])
+@login_required
+def search_users():
+    """Search users by username - for desktop clients"""
+    query = request.args.get('q', '', type=str).strip()
+    if len(query) < 2:
+        return jsonify({'error': 'Query too short', 'users': []}), 400
+    
+    users = User.query.filter(
+        User.username.ilike(f'%{query}%'),
+        User.privacy_searchable == True
+    ).limit(20).all()
+    
+    users_data = [{
+        'id': u.id,
+        'username': u.username,
+        'avatar_url': u.avatar_url or 'https://via.placeholder.com/50',
+        'bio': u.bio or ''
+    } for u in users]
+    
+    return jsonify({'users': users_data})
+
+
+@api_bp.route('/api/v1/search/servers', methods=['GET'])
+@login_required
+def search_servers():
+    """Search public servers - for desktop clients"""
+    query = request.args.get('q', '', type=str).strip()
+    if len(query) < 2:
+        return jsonify({'error': 'Query too short', 'servers': []}), 400
+    
+    rooms = Room.query.filter(
+        Room.name.ilike(f'%{query}%'),
+        Room.type != 'dm'
+    ).limit(20).all()
+    
+    rooms_data = [{
+        'id': r.id,
+        'name': r.name,
+        'description': r.description or '',
+        'type': r.type,
+        'avatar_url': r.avatar_url or 'https://via.placeholder.com/100',
+        'member_count': len(r.members)
+    } for r in rooms]
+    
+    return jsonify({'servers': rooms_data})
+
+
+@api_bp.route('/api/v1/dm/<int:user_id>/create', methods=['POST'])
+@login_required
+def create_dm(user_id):
+    """Create or get DM with user - for desktop clients"""
+    user = User.query.get_or_404(user_id)
+    
+    # Check if DM already exists
+    existing_dm = Room.query.filter(
+        Room.type == 'dm',
+        Room.members.any(Member.user_id == current_user.id),
+        Room.members.any(Member.user_id == user_id)
+    ).first()
+    
+    if existing_dm:
+        return jsonify({'success': True, 'room_id': existing_dm.id})
+    
+    # Create new DM
+    dm = Room(name=f"DM: {current_user.username} - {user.username}", type='dm')
+    db.session.add(dm)
+    db.session.flush()
+    
+    # Add both users
+    for uid in [current_user.id, user_id]:
+        member = Member(user_id=uid, room_id=dm.id, role='owner')
+        db.session.add(member)
+    
+    # Create default channel for DM
+    channel = Channel(room_id=dm.id, name='general', emoji='💬')
+    db.session.add(channel)
+    db.session.commit()
+    
+    return jsonify({'success': True, 'room_id': dm.id})
+
+
+@api_bp.route('/api/v1/room/<int:room_id>/join', methods=['POST'])
+@login_required
+def join_room_api(room_id):
+    """Join a room - for desktop clients"""
+    room = Room.query.get_or_404(room_id)
+    
+    # Check if already member
+    existing = Member.query.filter_by(user_id=current_user.id, room_id=room_id).first()
+    if existing:
+        return jsonify({'success': True, 'message': 'Already a member'})
+    
+    member = Member(user_id=current_user.id, room_id=room_id, role='member')
+    db.session.add(member)
+    db.session.commit()
+    
+    return jsonify({'success': True, 'message': 'Joined room'})
+
+
+@api_bp.route('/api/v1/statistics', methods=['GET'])
+@login_required
+def get_statistics():
+    """Get user statistics - for desktop clients"""
+    msg_count = Message.query.filter_by(user_id=current_user.id).count()
+    room_count = Member.query.filter_by(user_id=current_user.id).count()
+    
+    return jsonify({
+        'total_messages': msg_count,
+        'total_rooms': room_count,
+        'user_id': current_user.id
+    })
+

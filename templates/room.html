@@ -3,7 +3,7 @@
 
 <style>
     .rooms-list { flex-direction: column; }
-    .channel-item { position: relative; padding: 8px 12px; border-radius: var(--radius-sm); cursor: pointer; transition: 0.15s; margin: 2px 8px; }
+    .channel-item { position: relative; padding: 8px 12px; border-radius: var(--radius-sm); cursor: pointer; transition: 0.15s; margin: 2px 8px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
     .channel-item:hover { background-color: var(--bg-surface); }
     .channel-item.active { background-color: var(--bg-surface); color: var(--primary); }
     /* hide legacy hover action buttons; actions are moved to context menu */
@@ -11,6 +11,7 @@
     .channel-actions { display: none; position: absolute; right: 8px; top: 50%; transform: translateY(-50%); gap: 4px; }
     .channel-actions button { background: var(--danger); padding: 4px 8px; font-size: 0.75em; border: none; border-radius: var(--radius-sm); cursor: pointer; color: white; }
     .channel-icon { width: 18px; height: 18px; display: inline-block; vertical-align: middle; margin-right: 6px; }
+    .unread-badge { background: #ff5c5c; color: white; border-radius: 50%; min-width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; font-size: 0.7rem; font-weight: 700; flex-shrink: 0; line-height: 1; }
     
     .message-file { background: var(--bg-panel); padding: 12px; border-radius: var(--radius-md); margin: 8px 0; display: inline-flex; align-items: center; gap: 12px; border: 1px solid var(--border); }
     .message-image { max-width: 400px; max-height: 400px; border-radius: var(--radius-md); cursor: pointer; margin: 8px 0; display: block; }
@@ -108,7 +109,9 @@
                     {% else %}
                         <span class="channel-icon" style="font-size: 14px;">#</span>
                     {% endif %}
-                    <span>{{ ch.name }}</span>
+                    <span style="flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ ch.name }}</span>
+                    {% set cu = channel_unread_counts.get(ch.id) if channel_unread_counts is defined else 0 %}
+                    {% if cu and cu > 0 %}<span class="unread-badge">{{ cu }}</span>{% endif %}
                     {% if member.role in ['owner', 'admin'] %}
                     <div class="channel-actions">
                         <button onclick="event.stopPropagation(); editChannel({{ ch.id }}, '{{ ch.name }}', '{{ ch.description or '' }}', '{{ ch.icon_emoji or '' }}', '{{ ch.icon_image_url or '' }}'); return false;" style="background: transparent; border: none; color: var(--text-muted); cursor: pointer; font-size: 1.2em;" title="Edit">
@@ -137,7 +140,15 @@
         <div class="members-section">
             <div class="channel-section-title">Members</div>
             {% for m in room.members %}
-                <div class="member-item {% if m.role == 'owner' %}owner{% endif %}">
+                <div class="member-item {% if m.role == 'owner' %}owner{% endif %}" data-member-user-id="{{ m.user.id }}">
+                    {% set p = m.user.presence_status if m.user is not none else 'offline' %}
+                    {% if p == 'online' %}
+                        <span class="status-dot" data-user-id="{{ m.user.id }}" style="width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:8px;background:#43b581;"></span>
+                    {% elif p == 'away' %}
+                        <span class="status-dot" data-user-id="{{ m.user.id }}" style="width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:8px;background:#faa61a;"></span>
+                    {% else %}
+                        <span class="status-dot" data-user-id="{{ m.user.id }}" style="width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:8px;background:#6b6b6b;opacity:1;"></span>
+                    {% endif %}
                     {{ m.user.username }}
                 </div>
             {% endfor %}
@@ -181,7 +192,7 @@
                 {% endif %}
             </div>
             {% endif %}
-            <div class="message-content">
+            <div class="message-content" data-user-id="{{ msg.user_id }}">
                 {% if msg.user_id != current_user.id %}
                 <div class="msg-meta">
                     <span class="msg-author" onclick="showProfile({{ msg.user.id }}, event)">{{ msg.user.username }}</span>
@@ -315,6 +326,9 @@
         </div>
         {% endfor %}
     </div>
+
+    <!-- Floating Jump-to-Latest Button (FAB) -->
+    <button id="jumpToLatestFAB" title="Jump to latest messages" style="position: fixed; bottom: 120px; right: 20px; width: 50px; height: 50px; border-radius: 50%; background: var(--primary); color: var(--bg-dark); border: none; font-size: 1.5rem; cursor: pointer; display: none; align-items: center; justify-content: center; box-shadow: 0 4px 12px rgba(0,0,0,0.3); z-index: 100; transition: 0.2s;\">↓</button>
 
     {% if room.type == 'broadcast' and member.role not in ['owner', 'admin'] %}
         <div class="chat-input-area" style="text-align: center; color: var(--text-muted); padding: 20px;">
@@ -623,8 +637,69 @@ if (typeof io === 'undefined') {
     var userRole = null;
     var pendingReactions = {}; // store reactions received before message DOM exists
 
+    // ========== JUMP TO LATEST FAB BUTTON ==========
+    // Define setupJumpFAB BEFORE initializeApp so it's available when called
+    window.setupJumpFAB = function() {
+        const fabBtn = document.getElementById('jumpToLatestFAB');
+        const md = window.messagesDiv || document.getElementById('messages');
+        if (!fabBtn || !md) {
+            console.warn('setupJumpFAB: fabBtn or messagesDiv not found', {fabBtn: !!fabBtn, messagesDiv: !!md});
+            return;
+        }
+
+        // Remove old event listeners if they exist
+        if (md._fabScrollListener) {
+            md.removeEventListener('scroll', md._fabScrollListener);
+        }
+
+        const checkScrollPosition = function() {
+            const isNearBottom = (md.scrollHeight - md.scrollTop - md.clientHeight) < 150;
+            fabBtn.style.display = isNearBottom ? 'none' : 'flex';
+        };
+
+        // Store listener so we can clean it up
+        md._fabScrollListener = checkScrollPosition;
+        md.addEventListener('scroll', checkScrollPosition);
+        
+        // Wrap addMessageToChat to update FAB on new messages
+        if (!window._addMessageToChat_original) {
+            window._addMessageToChat_original = window.addMessageToChat;
+            window.addMessageToChat = function(data) {
+                window._addMessageToChat_original.call(window, data);
+                setTimeout(checkScrollPosition, 100);
+            };
+        }
+
+        // Click handler: scroll to bottom and mark as read
+        if (!fabBtn._initialized) {
+            fabBtn.addEventListener('click', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                try {
+                    md.scrollTop = md.scrollHeight;
+                    fabBtn.style.display = 'none';
+                    // Mark channel as read
+                    if (window.channelId) {
+                        fetch(`/channel/${window.channelId}/mark_read`, { method: 'POST' }).catch(e => {});
+                    }
+                } catch (e) { console.error('FAB click failed', e); }
+            });
+            fabBtn._initialized = true;
+        }
+
+        // Initial check
+        checkScrollPosition();
+        console.log('[DEBUG] setupJumpFAB initialized, messagesDiv ready:', !!md, 'isNearBottom:', (md.scrollHeight - md.scrollTop - md.clientHeight) < 150);
+    };
+
     // === Инициализация после загрузки socket.io И DOM ===
     function initializeApp() {
+        // Prevent double initialization
+        if (window._roomAppInitialized) {
+            console.debug('[initializeApp] Already initialized, skipping');
+            return;
+        }
+        
         // Проверяем, загружена ли socket.io библиотека
         if (typeof io === 'undefined') {
             // Try to dynamically load the CDN once, avoid spamming the console
@@ -661,6 +736,14 @@ if (typeof io === 'undefined') {
         window.currentUserId = currentUserId;
         window.currentUsername = currentUsername;
         window.userRole = userRole;
+        
+        // Setup all socket listeners after socket is ready
+        try { window.setupReactionsListener(); } catch (e) { console.error('setupReactionsListener failed', e); }
+        try { window.setupMessageEditedListener(); } catch (e) { console.error('setupMessageEditedListener failed', e); }
+        
+        // Setup FAB button immediately after messagesDiv is assigned
+        try { window.setupJumpFAB(); } catch (e) { console.error('setupJumpFAB after messagesDiv assignment failed', e); }
+        
         // Reply state for reply-to-message feature
         // when set, sendMessage will include reply metadata and preview it
         window.replyTo = null; // { id, username, snippet }
@@ -685,13 +768,54 @@ if (typeof io === 'undefined') {
             }
         } catch (e) {}
         
-        socket.on('connect', function() {
-            socket.emit('join', {channel_id: channelId});
-        });
+        // Setup socket listeners ONLY if not already attached
+        if (!socket._roomListenersAttached) {
+            socket._roomListenersAttached = true;
+            console.debug('[socket] Attaching room listeners (connect, receive_message, etc)');
+            
+            socket.on('connect', function() {
+                console.debug('[socket.connect] Connected, emitting join for channel:', channelId);
+                socket.emit('join', {channel_id: channelId});
+                
+                // Update own status in the members list immediately
+                console.log('[socket.connect] Looking for own status dot with userId:', window.currentUserId);
+                const ownDot = document.querySelector(`.status-dot[data-user-id="${window.currentUserId}"]`);
+                console.log('[socket.connect] Found ownDot:', ownDot);
+                if (ownDot) {
+                    console.log('[socket.connect] Updating own status to green');
+                    // Connected = online
+                    ownDot.style.background = '#43b581'; // green
+                    ownDot.style.opacity = '1';
+                } else {
+                    console.warn('[socket.connect] Own status dot not found! Looking for all dots:', document.querySelectorAll('.status-dot'));
+                }
+            });
 
-        socket.on('receive_message', function(data) {
-            try { console.debug('receive_message payload:', data); } catch(e) {}
-            addMessageToChat(data);
+            socket.on('receive_message', function(data) {
+                console.debug('[socket.receive_message] Got message from', data.username, ':', data.msg.substring(0, 50));
+                try { console.debug('receive_message payload:', data); } catch(e) {}
+                addMessageToChat(data);
+            });
+
+            socket.on('presence_updated', function(data) {
+            try {
+                if (!data || !data.user_id) return;
+                const userId = Number(data.user_id);
+                const dot = document.querySelector(`.status-dot[data-user-id="${userId}"]`);
+                if (!dot) return;
+                const status = data.status || 'offline';
+                if (status === 'online') {
+                    dot.style.background = '#43b581'; // green
+                } else if (status === 'away') {
+                    dot.style.background = '#faa61a'; // yellow
+                } else if (status === 'hidden') {
+                    dot.style.background = '#6b6b6b'; // muted
+                    dot.style.opacity = '0.6';
+                } else {
+                    dot.style.background = '#6b6b6b';
+                    dot.style.opacity = '1';
+                }
+            } catch (e) { console.error('presence_updated handler failed', e); }
         });
 
         socket.on('error', function(data) {
@@ -707,6 +831,29 @@ if (typeof io === 'undefined') {
             }
         });
 
+        // Listen for notifications everywhere (not just dashboard)
+        socket.on('message_notification', function(data) {
+            console.debug('[socket.message_notification] Got notification from', data.from_user, 'channel:', data.channel_id, 'unread:', data.unread_count);
+            try {
+                const title = data.from_user || 'New message';
+                const body = data.snippet || 'New message';
+                if (window.Notification && Notification.permission === 'granted') {
+                    try {
+                        const n = new Notification(title, { body: body, icon: '/static/img/logo-192.png' });
+                        n.onclick = function() {
+                            window.focus();
+                            // If the notification is for current channel, do nothing (user already sees it)
+                            // Otherwise navigate to the channel
+                            if (data.channel_id && data.channel_id !== window.channelId) {
+                                window.location.href = '/room/' + data.room_id + '?channel_id=' + data.channel_id;
+                            }
+                        };
+                    } catch (e) { console.error('Notification failed', e); }
+                }
+            } catch (e) { console.error('message_notification handler in room failed', e); }
+            });
+        } // End of socket listeners attachment
+        
         document.getElementById('fileInput').addEventListener('change', function(e) {
             const files = Array.from(e.target.files);
             files.forEach(file => {
@@ -849,9 +996,21 @@ if (typeof io === 'undefined') {
                 document.getElementById('profilePreview').style.display = 'none';
             }
         });
+        
+        // === ИНИЦИАЛИЗАЦИЯ ПОСЛЕ ЗАГРУЗКИ ===
+        // FAB button is already initialized after messagesDiv assignment
+        
+        // Mark as initialized to prevent double-initialization
+        window._roomAppInitialized = true;
+        console.log('[initializeApp] Initialization complete');
     }
     
-    // Setup long-press for channels on mobile
+    // Call initializeApp on document ready or immediately if already loaded
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initializeApp);
+    } else {
+        initializeApp();
+    }
     function setupChannelLongPress() {
         const channelItems = document.querySelectorAll('.channel-item');
         channelItems.forEach(item => {
@@ -1102,6 +1261,12 @@ if (typeof io === 'undefined') {
     }
 
     function sendMessage() {
+        // Prevent double-send by checking a flag
+        if (window._messageSending) {
+            console.debug('[sendMessage] Send already in progress, ignoring');
+            return;
+        }
+        
         const input = document.getElementById('myMessage');
         let text = input.value;
         
@@ -1111,6 +1276,8 @@ if (typeof io === 'undefined') {
         
         if (filePreviews.length > 0) {
             // Отправляем все файлы с одним текстом
+            window._messageSending = true;
+            console.debug('[sendMessage] Sending', filePreviews.length, 'files with caption:', text);
             filePreviews.forEach(preview => {
                 uploadAndSendFile(preview.file, text);
             });
@@ -1119,7 +1286,11 @@ if (typeof io === 'undefined') {
             updateFilePreviewArea();
             input.value = '';
             input.style.height = 'auto';
+            // Reset flag after a short delay to allow async operations
+            setTimeout(() => { window._messageSending = false; }, 500);
         } else if (text) {
+            window._messageSending = true;
+            console.debug('[sendMessage] Sending text message:', text.substring(0, 50));
             const payload = {
                 room_id: Number(window.roomId),
                 channel_id: Number(window.channelId),
@@ -1134,6 +1305,8 @@ if (typeof io === 'undefined') {
             input.style.height = 'auto';
             // clear reply state after sending
             clearReply();
+            // Reset flag
+            setTimeout(() => { window._messageSending = false; }, 500);
         }
     }
 
@@ -1605,6 +1778,10 @@ if (typeof io === 'undefined') {
         if (wasNearBottom) {
             window.messagesDiv.scrollTop = window.messagesDiv.scrollHeight;
         }
+        // Update FAB visibility
+        if (window.setupJumpFAB) {
+            try { window.setupJumpFAB(); } catch (e) { console.error('setupJumpFAB call failed', e); }
+        }
     }
     
     // Нормализуем текст в существующих сообщениях при загрузке страницы
@@ -1873,13 +2050,25 @@ if (typeof io === 'undefined') {
         let canEdit = false;
         try {
             if (msgEl) {
-                const contentEl = msgEl.querySelector('.message-content') || msgEl.querySelector('.msg-content');
+                const contentEl = msgEl.querySelector('.message-content');
+                console.log('[showContextMenu] msgEl:', msgEl);
+                console.log('[showContextMenu] contentEl:', contentEl);
+                console.log('[showContextMenu] contentEl.dataset:', contentEl ? contentEl.dataset : 'null');
+                console.log('[showContextMenu] contentEl.dataset.userId:', contentEl ? contentEl.dataset.userId : 'null');
+                
                 if (contentEl && contentEl.dataset && contentEl.dataset.userId) {
-                    canEdit = parseInt(contentEl.dataset.userId) === Number(window.currentUserId);
+                    const msgUserId = Number(contentEl.dataset.userId);
+                    const currentId = Number(window.currentUserId);
+                    canEdit = msgUserId === currentId;
+                    console.log('[showContextMenu] Check: msgUserId=' + msgUserId + ', currentId=' + currentId + ', match=' + canEdit);
+                } else {
+                    console.warn('[showContextMenu] No userId in dataset. Available:', contentEl ? Object.keys(contentEl.dataset) : 'no contentEl');
                 }
             }
         } catch (e) { console.error('showContextMenu compute canEdit failed', e); }
         const canDelete = msgEl && (canEdit || window.userRole == 'owner' || window.userRole == 'admin');
+        
+        console.log('[showContextMenu] Final: canEdit=' + canEdit + ', canDelete=' + canDelete + ', userRole=' + window.userRole);
         
         menu.querySelectorAll('.context-menu-item')[2].style.display = canEdit ? 'flex' : 'none'; // Редактировать
         menu.querySelectorAll('.context-menu-item')[6].style.display = canDelete ? 'flex' : 'none'; // Удалить
@@ -2317,65 +2506,77 @@ if (typeof io === 'undefined') {
         return true;
     }
     
-    (function bindReactionsUpdated() {
-        if (socket) {
-            socket.on('reactions_updated', function(data) {
-                console.debug('reactions_updated received', data);
-                // If the message element isn't present yet, queue the reactions
-                const ok = updateMessageReactions(data.message_id, data.reactions);
-                if (!ok) {
-                    pendingReactions[data.message_id] = data.reactions;
-                }
-            });
-        } else {
-            setTimeout(bindReactionsUpdated, 50);
+    // Bind reactions listener - will be called after socket is ready
+    function setupReactionsListener() {
+        if (!window.socket) {
+            setTimeout(setupReactionsListener, 50);
+            return;
         }
-    })();
+        if (window.socket._reactionsListenerAttached) {
+            return; // Already attached
+        }
+        window.socket._reactionsListenerAttached = true;
+        window.socket.on('reactions_updated', function(data) {
+            console.debug('[socket.reactions_updated] received:', data);
+            // If the message element isn't present yet, queue the reactions
+            const ok = updateMessageReactions(data.message_id, data.reactions);
+            if (!ok) {
+                pendingReactions[data.message_id] = data.reactions;
+            }
+        });
+        console.debug('[setupReactionsListener] Reactions listener attached');
+    }
     
-    // Обработчик редактирования сообщения
-    (function bindMessageEdited() {
-        if (socket) {
-            socket.on('message_edited', function(data) {
-        const msgEl = document.querySelector(`[data-msg-id="${data.message_id}"]`);
-        if (msgEl) {
-            const textEl = msgEl.querySelector('.msg-text');
-            if (textEl) {
-                // Убираем все дочерние элементы (textarea, кнопки и т.д.)
-                textEl.innerHTML = '';
-                textEl.textContent = data.content;
-                normalizeMessageText(msgEl);
-            }
-            const metaEl = msgEl.querySelector('.msg-meta');
-            if (metaEl && data.edited_at_iso) {
-                // Remove old edited marker if present
-                const oldEdited = metaEl.querySelector('.msg-edited');
-                if (oldEdited) oldEdited.remove();
-                const editedSpan = document.createElement('span');
-                editedSpan.className = 'msg-edited';
-                editedSpan.setAttribute('data-edited-at', data.edited_at_iso);
-                editedSpan.style.color = '#72767d';
-                editedSpan.style.fontSize = '0.85em';
-                editedSpan.style.marginLeft = '5px';
-                editedSpan.textContent = '(изменено)';
-                metaEl.appendChild(editedSpan);
-                // Re-render timestamps to show edited time label
-                renderTimestampsAndSeparators();
-            }
-            // Обновляем реакции
-            if (data.reactions) {
-                updateMessageReactions(data.message_id, data.reactions);
-            }
-            
-            // Обновляем ссылку на элемент в контекстном меню, если это то же сообщение
-            if (contextMenuMessageId === data.message_id) {
-                contextMenuMessageElement = msgEl;
-            }
+    // Call this after socket is initialized
+    if (typeof io !== 'undefined') {
+        setupReactionsListener();
+    }
+
+    
+    // Bind message edited listener - will be called after socket is ready
+    function setupMessageEditedListener() {
+        if (!window.socket) {
+            setTimeout(setupMessageEditedListener, 50);
+            return;
         }
-            });
-        } else {
-            setTimeout(bindMessageEdited, 50);
+        if (window.socket._messageEditedListenerAttached) {
+            return; // Already attached
         }
-    })();
+        window.socket._messageEditedListenerAttached = true;
+        window.socket.on('message_edited', function(data) {
+            console.debug('[socket.message_edited] received:', data);
+            const msgEl = document.querySelector(`[data-msg-id="${data.message_id}"]`);
+            if (msgEl) {
+                const textEl = msgEl.querySelector('.msg-text');
+                if (textEl) {
+                    textEl.innerHTML = '';
+                    textEl.textContent = data.content;
+                    normalizeMessageText(msgEl);
+                }
+                const metaEl = msgEl.querySelector('.msg-meta');
+                if (metaEl && data.edited_at_iso) {
+                    const oldEdited = metaEl.querySelector('.msg-edited');
+                    if (oldEdited) oldEdited.remove();
+                    const editedSpan = document.createElement('span');
+                    editedSpan.className = 'msg-edited';
+                    editedSpan.setAttribute('data-edited-at', data.edited_at_iso);
+                    editedSpan.style.color = '#72767d';
+                    editedSpan.style.fontSize = '0.85em';
+                    editedSpan.style.marginLeft = '5px';
+                    editedSpan.textContent = '(изменено)';
+                    metaEl.appendChild(editedSpan);
+                    renderTimestampsAndSeparators();
+                }
+                if (data.reactions) {
+                    updateMessageReactions(data.message_id, data.reactions);
+                }
+                if (contextMenuMessageId === data.message_id) {
+                    contextMenuMessageElement = msgEl;
+                }
+            }
+        });
+        console.debug('[setupMessageEditedListener] Message edited listener attached');
+    }
     
     // ========== СТИКЕРЫ ==========
     function loadStickerPacks() {

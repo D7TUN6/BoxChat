@@ -309,6 +309,10 @@
                     <input type="checkbox" name="privacy_listable" {% if user.privacy_listable %}checked{% endif %}>
                     <label>Show me in member lists</label>
                 </label>
+                <label class="checkbox-item">
+                    <input type="checkbox" name="hide_status" {% if user.hide_status %}checked{% endif %}>
+                    <label>Hide my online status</label>
+                </label>
             </div>
 
             <div class="button-row">

@@ -52,6 +52,7 @@
             <div class="icon-circle">
                 <span class="material-icons-round">person</span>
             </div>
+            <span id="dashboardUnreadBadge" style="display:none; position:absolute; right:6px; top:6px; background:var(--danger); color:#fff; border-radius:10px; padding:2px 6px; font-size:0.75rem; font-weight:700;"></span>
         </a>
         <a href="{{ url_for('main.explore') }}" class="nav-item" title="Explore">
             <div class="icon-circle">
@@ -422,6 +423,68 @@ document.addEventListener('DOMContentLoaded', function() {
         if (menu) menu.style.display = 'none';
     };
 });
+</script>
+<script>
+// Personal notification socket (separate from page socket instances)
+try {
+    const notifSocket = (typeof io !== 'undefined') ? io() : null;
+    let globalUnread = 0;
+
+    function showBadge(count) {
+        const el = document.getElementById('dashboardUnreadBadge');
+        if (!el) return;
+        if (count && count > 0) {
+            el.style.display = 'inline-block';
+            el.textContent = count > 99 ? '99+' : String(count);
+        } else {
+            el.style.display = 'none';
+        }
+    }
+    // expose globally so other pages/scripts can clear/update the badge
+    window.showBadge = showBadge;
+    window.clearDashboardBadge = function() { globalUnread = 0; showBadge(0); };
+
+    if (notifSocket) {
+        notifSocket.on('connect', function() {
+            try { notifSocket.emit('join', {channel_id: null}); } catch (e) {}
+            // request notification permission once
+            if (window.Notification && Notification.permission === 'default') {
+                try { Notification.requestPermission().then(() => {}); } catch(e) {}
+            }
+        });
+
+        notifSocket.on('message_notification', function(data) {
+            try {
+                // Update dashboard badge when off-dashboard
+                globalUnread = (globalUnread || 0) + 1;
+                showBadge(globalUnread);
+
+                // Show browser notification if page not focused or not viewing that channel
+                const title = data.from_user || 'New message';
+                const body = data.snippet || 'New message';
+                if (window.Notification && Notification.permission === 'granted') {
+                    try {
+                        const n = new Notification(title, { body: body, icon: '/static/img/logo-192.png' });
+                        n.onclick = function() {
+                            window.focus();
+                            // navigate to dashboard by default so user can reach message
+                            window.location.href = '/';
+                        };
+                    } catch (e) { console.error('Notification failed', e); }
+                }
+            } catch (e) { console.error('message_notification handler failed', e); }
+        });
+
+        // Legacy handler for dashboard list updates
+        notifSocket.on('new_dm_message', function(data) {
+            try {
+                // increment unread summary badge
+                globalUnread = (globalUnread || 0) + 1;
+                showBadge(globalUnread);
+            } catch (e) {}
+        });
+    }
+} catch (e) { console.error('notif socket init failed', e); }
 </script>
 <style>
 .context-menu {

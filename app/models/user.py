@@ -20,6 +20,10 @@ class User(UserMixin, db.Model):
     # Privacy settings
     privacy_searchable = db.Column(db.Boolean, default=True)  # Can be found in search
     privacy_listable = db.Column(db.Boolean, default=True)    # Visible in user list
+    # Presence/status
+    presence_status = db.Column(db.String(20), default='offline')  # 'online','offline','away','hidden'
+    last_seen = db.Column(db.DateTime, nullable=True)
+    hide_status = db.Column(db.Boolean, default=False)
     
     # Permissions
     is_superuser = db.Column(db.Boolean, default=False)

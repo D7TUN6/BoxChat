@@ -258,7 +258,17 @@ def view_room(room_id):
         room=room,
         member=member,
         active_channel_id=int(active_channel_id) if active_channel_id else None,
-        messages=messages
+        active_channel=Channel.query.get(active_channel_id) if active_channel_id else None,
+        messages=messages,
+        channel_unread_counts={
+            ch.id: (
+                Message.query.filter(
+                    Message.channel_id == ch.id,
+                    Message.user_id != current_user.id,
+                    Message.id > (ReadMessage.query.filter_by(user_id=current_user.id, channel_id=ch.id).first().last_read_message_id if ReadMessage.query.filter_by(user_id=current_user.id, channel_id=ch.id).first() and ReadMessage.query.filter_by(user_id=current_user.id, channel_id=ch.id).first().last_read_message_id else 0)
+                ).count()
+            ) for ch in room.channels
+        }
     )
 
 

@@ -4,3 +4,6 @@ Flask-SQLAlchemy
 Flask-Login
 eventlet
 Pillow
+gunicorn
+python-socketio
+python-engineio

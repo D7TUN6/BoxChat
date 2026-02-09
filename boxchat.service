@@ -1,0 +1,23 @@
+[Unit]
+Description=BoxChat Application
+After=network.target
+
+[Service]
+Type=notify
+User=www-data
+WorkingDirectory=/home/d7tun6/files/services/boxchat
+Environment="PATH=/home/d7tun6/files/services/boxchat/venv/bin"
+ExecStart=/home/d7tun6/files/services/boxchat/venv/bin/gunicorn \
+    --worker-class eventlet \
+    -w 1 \
+    --bind 127.0.0.1:5000 \
+    --timeout 120 \
+    --access-logfile - \
+    --error-logfile - \
+    wsgi:app
+
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
