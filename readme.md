@@ -1,47 +1,46 @@
-# BoxChat messenger
+# BoxChat Messenger
 
-BoxChat is simple self-hosted messenger
+BoxChat is a simple, self-hosted messenger application.
 
-# IMPORTANT.
-I'm tired, the project is supported as best I can, I'm looking for contributions
+## Stack
 
-It uses following stack:
-    backend: python, flask, socket.io, js
-    frontend: html, css, js
+- **Backend:** Python, Flask, Socket.IO, JavaScript
+- **Frontend:** HTML, CSS, JavaScript
 
-## Launching your own instance
+## Status
 
-For launching you need python 3.8+
+This project is maintained on a best-effort basis. Contributions are welcome!
 
-venv:
+## Getting Started
+
+### Requirements
+
+- Python 3.8 or higher
+
+### Setup with venv
 
 ```bash
 python -m venv boxchat-venv
 
-# Windows
+# Activate virtual environment
+# On Windows:
 boxchat-venv\Scripts\activate
 
-# Linux/macOS
+# On Linux/macOS:
 source boxchat-venv/bin/activate
 
-# Installing dependencies
+# Install dependencies
 pip install --upgrade pip
 pip install -r requirements.txt
-
-# Install NPM packages
 npm install
 
-# Run server
+# Start the server
 python run.py
-
 ```
 
-nix:
+### Setup with Nix
 
 ```bash
-# Activate shell
 nix-shell
-
-# Run server
 python run.py
 ```
