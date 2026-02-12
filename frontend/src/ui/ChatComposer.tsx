@@ -49,7 +49,11 @@ export default function ChatComposer({
         borderTop: '1px solid',
         borderColor: 'divider',
         px: { xs: 1, md: 2.2 },
-        py: { xs: 0.9, md: 1.8 },
+        py: { xs: 0.9, md: 1.2 },
+        minHeight: { xs: 68, md: 84 },
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'center',
         position: 'relative',
         bgcolor: 'background.paper',
       }}

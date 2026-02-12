@@ -22,6 +22,7 @@ type Room = {
 export default function DashboardPage() {
   const [rooms, setRooms] = useState<Room[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [incomingRequests, setIncomingRequests] = useState<Array<{ id: number; user?: { id?: number; username?: string } }>>([])
 
   useEffect(() => {
     let active = true
@@ -43,6 +44,55 @@ export default function DashboardPage() {
     }
   }, [])
 
+  useEffect(() => {
+    let active = true
+    async function loadRequests() {
+      const res = await fetch('/api/v1/friends/requests', {
+        credentials: 'include',
+        headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+      }).catch(() => null)
+      if (!res?.ok || !active) return
+      const payload = await res.json().catch(() => null)
+      if (!active) return
+      setIncomingRequests(Array.isArray(payload?.incoming) ? payload.incoming : [])
+    }
+    void loadRequests()
+    const timer = window.setInterval(() => {
+      void loadRequests()
+    }, 10000)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+    }
+  }, [])
+
+  async function respondToRequest(requestId: number, action: 'accept' | 'decline', otherUserId?: number) {
+    const res = await fetch(`/api/v1/friends/requests/${requestId}/respond`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      body: JSON.stringify({ action }),
+    }).catch(() => null)
+    if (!res?.ok) return
+    setIncomingRequests((prev) => prev.filter((r) => Number(r.id) !== Number(requestId)))
+    if (action === 'accept' && otherUserId) {
+      const dmRes = await fetch(`/api/v1/dm/${otherUserId}/create`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+      }).catch(() => null)
+      const payload = await dmRes?.json().catch(() => null)
+      const roomId = Number(payload?.room_id || 0)
+      if (roomId > 0) {
+        window.location.href = `/room/${roomId}`
+      }
+    }
+  }
+
   const dms = useMemo(() => rooms.filter((r) => r.type === 'dm'), [rooms])
   const servers = useMemo(() => rooms.filter((r) => r.type !== 'dm'), [rooms])
 
@@ -56,6 +106,51 @@ export default function DashboardPage() {
       </Paper>
 
       {error ? <Alert severity="warning">{error}</Alert> : null}
+
+      <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider', p: 1.2 }}>
+        <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ px: 0.6, py: 0.4 }}>
+          <Typography variant="subtitle1" fontWeight={700}>
+            Friend Requests
+          </Typography>
+          <Button href="/notifications" size="small">
+            Open notifications
+          </Button>
+        </Stack>
+        <Divider sx={{ mb: 0.8 }} />
+        <Stack spacing={0.6}>
+          {!incomingRequests.length ? (
+            <Typography color="text.secondary" sx={{ px: 1.1, py: 0.6 }}>
+              No incoming requests.
+            </Typography>
+          ) : (
+            incomingRequests.map((req) => (
+              <Stack
+                key={`fr-${req.id}`}
+                direction="row"
+                alignItems="center"
+                justifyContent="space-between"
+                sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, px: 1, py: 0.8 }}
+              >
+                <Typography noWrap sx={{ minWidth: 0, pr: 1 }}>
+                  {req.user?.username ?? 'Unknown'} sent a friend request
+                </Typography>
+                <Stack direction="row" spacing={0.6}>
+                  <Button
+                    size="small"
+                    variant="contained"
+                    onClick={() => void respondToRequest(req.id, 'accept', req.user?.id)}
+                  >
+                    Accept
+                  </Button>
+                  <Button size="small" variant="outlined" color="inherit" onClick={() => void respondToRequest(req.id, 'decline')}>
+                    Decline
+                  </Button>
+                </Stack>
+              </Stack>
+            ))
+          )}
+        </Stack>
+      </Paper>
 
       <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider', p: 1.2 }}>
         <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ px: 0.6, py: 0.4 }}>

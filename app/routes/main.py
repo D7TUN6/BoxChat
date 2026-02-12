@@ -10,6 +10,20 @@ from app.functions import ensure_default_roles, ensure_user_default_roles
 
 main_bp = Blueprint('main', __name__)
 
+
+def _get_active_room_ban(user_id: int, room_id: int):
+    room_ban = RoomBan.query.filter_by(user_id=user_id, room_id=room_id).first()
+    if not room_ban:
+        return None
+    if getattr(room_ban, 'banned_until', None) and room_ban.banned_until <= datetime.utcnow():
+        try:
+            db.session.delete(room_ban)
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+        return None
+    return room_ban
+
 @main_bp.route('/')
 @login_required
 def dashboard():
@@ -29,7 +43,7 @@ def view_room(room_id):
     room = Room.query.get_or_404(room_id)
     member = Member.query.filter_by(user_id=current_user.id, room_id=room_id).first()
     
-    room_ban = RoomBan.query.filter_by(user_id=current_user.id, room_id=room_id).first()
+    room_ban = _get_active_room_ban(current_user.id, room_id)
     if room_ban:
         flash(f'you are banned from this room{": " + room_ban.reason if room_ban.reason else ""}')
         return redirect(url_for('main.dashboard'))
@@ -127,7 +141,7 @@ def join_room_view(room_id):
         flash('your account is banned and cannot join rooms')
         return redirect(url_for('main.dashboard'))
     # Check if user is banned from this room
-    room_ban = RoomBan.query.filter_by(user_id=current_user.id, room_id=room_id).first()
+    room_ban = _get_active_room_ban(current_user.id, room_id)
     if room_ban:
         flash(f'you are banned from this room{": " + room_ban.reason if room_ban.reason else ""}')
         return redirect(url_for('main.dashboard'))
@@ -157,7 +171,7 @@ def join_room_by_invite(token):
         return redirect(url_for('main.dashboard'))
 
     # Check if user is banned from this room
-    room_ban = RoomBan.query.filter_by(user_id=current_user.id, room_id=room.id).first()
+    room_ban = _get_active_room_ban(current_user.id, room.id)
     if room_ban:
         flash(f'you are banned from this room{": " + room_ban.reason if room_ban.reason else ""}')
         return redirect(url_for('main.dashboard'))

@@ -3,10 +3,11 @@
 import os
 import re
 import inspect
+import json
 from flask import Blueprint, request, jsonify, render_template, redirect, url_for, flash, send_from_directory, current_app
 from flask_login import login_required, current_user
 from werkzeug.security import check_password_hash, generate_password_hash
-from datetime import datetime
+from datetime import datetime, timedelta
 from sqlalchemy import or_, and_, func
 from app.extensions import db, socketio
 from app.models import (
@@ -15,7 +16,8 @@ from app.models import (
 )
 from app.functions import (
     save_uploaded_file, resize_image, is_image_file, is_music_file, is_video_file,
-    normalize_role_tag, ensure_default_roles, ensure_user_default_roles, can_user_mention_role
+    normalize_role_tag, ensure_default_roles, ensure_user_default_roles, can_user_mention_role,
+    ROLE_PERMISSION_KEYS, parse_role_permissions, get_user_permissions, user_has_room_permission
 )
 from app.routes.spa import send_spa_index
 from app.routes.api_friends import register_friends_routes
@@ -117,6 +119,46 @@ def has_room_admin_access(user_id, room):
     return bool(member and member.role in ['owner', 'admin'])
 
 
+def has_room_permission(user_id, room, permission_key: str):
+    if not room:
+        return False
+    return bool(user_has_room_permission(int(user_id), int(room.id), permission_key))
+
+
+def parse_duration_minutes(raw):
+    token = str(raw or '').strip().lower()
+    if not token:
+        return None
+    m = re.match(r'^(\d+)([mhd]?)$', token)
+    if not m:
+        return None
+    value = int(m.group(1))
+    unit = m.group(2) or 'm'
+    if value <= 0:
+        return None
+    if unit == 'm':
+        return value
+    if unit == 'h':
+        return value * 60
+    if unit == 'd':
+        return value * 60 * 24
+    return None
+
+
+def get_active_room_ban(user_id: int, room_id: int):
+    room_ban = RoomBan.query.filter_by(user_id=user_id, room_id=room_id).first()
+    if not room_ban:
+        return None
+    if getattr(room_ban, 'banned_until', None) and room_ban.banned_until <= datetime.utcnow():
+        try:
+            db.session.delete(room_ban)
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+        return None
+    return room_ban
+
+
 def save_file(file, subfolder='files'):
     # Wrapper for save_uploaded_file that uses current_app's upload folder
     return save_uploaded_file(file, subfolder, current_app.config['UPLOAD_FOLDER'])
@@ -152,8 +194,8 @@ def _emit_presence_update_for_user(user):
 @login_required
 def add_channel(room_id):
     # Add channel to room
-    role = get_role(current_user.id, room_id)
-    if role not in ['owner', 'admin']:
+    room = Room.query.get_or_404(room_id)
+    if not has_room_permission(current_user.id, room, 'manage_channels'):
         return jsonify({'error': 'Нет доступа'}), 403
     
     name = request.form.get('name')
@@ -167,8 +209,8 @@ def add_channel(room_id):
 @login_required
 def edit_channel(room_id, channel_id):
     # Edit channel
-    role = get_role(current_user.id, room_id)
-    if role not in ['owner', 'admin']:
+    room = Room.query.get_or_404(room_id)
+    if not has_room_permission(current_user.id, room, 'manage_channels'):
         return jsonify({'error': 'Нет доступа'}), 403
     
     channel = Channel.query.get_or_404(channel_id)
@@ -178,6 +220,15 @@ def edit_channel(room_id, channel_id):
     channel.name = request.form.get('name', channel.name)
     channel.description = request.form.get('description', channel.description)
     channel.icon_emoji = request.form.get('icon_emoji', channel.icon_emoji)
+    writer_role_ids = request.form.get('writer_role_ids')
+    if writer_role_ids is not None:
+        try:
+            parsed = json.loads(writer_role_ids)
+            if isinstance(parsed, list):
+                valid_roles = Role.query.filter(Role.room_id == room_id, Role.id.in_(parsed)).all()
+                channel.writer_role_ids_json = json.dumps([int(r.id) for r in valid_roles])
+        except Exception:
+            pass
     
     if 'icon_file' in request.files:
         file = request.files['icon_file']
@@ -196,8 +247,8 @@ def edit_channel(room_id, channel_id):
 @login_required
 def delete_channel(room_id, channel_id):
     # Delete channel
-    role = get_role(current_user.id, room_id)
-    if role not in ['owner', 'admin']:
+    room = Room.query.get_or_404(room_id)
+    if not has_room_permission(current_user.id, room, 'manage_channels'):
         return jsonify({'error': 'Нет доступа'}), 403
     
     channel = Channel.query.get_or_404(channel_id)
@@ -207,6 +258,30 @@ def delete_channel(room_id, channel_id):
     db.session.delete(channel)
     db.session.commit()
     return jsonify({'success': True})
+
+
+@api_bp.route('/api/v1/room/<int:room_id>/channel/<int:channel_id>/permissions', methods=['PATCH'])
+@login_required
+def update_channel_permissions(room_id, channel_id):
+    room = Room.query.get_or_404(room_id)
+    if not has_room_permission(current_user.id, room, 'manage_channels'):
+        return jsonify({'error': 'Access denied'}), 403
+    channel = Channel.query.get_or_404(channel_id)
+    if channel.room_id != room_id:
+        return jsonify({'error': 'wrong channel'}), 400
+    data = request.get_json(silent=True) or {}
+    writer_role_ids = data.get('writer_role_ids', [])
+    if not isinstance(writer_role_ids, list):
+        return jsonify({'error': 'writer_role_ids must be list'}), 400
+    valid_roles = Role.query.filter(Role.room_id == room_id, Role.id.in_(writer_role_ids)).all()
+    channel.writer_role_ids_json = json.dumps([int(r.id) for r in valid_roles])
+    db.session.commit()
+    try:
+        for m in Member.query.filter_by(room_id=room_id).all():
+            socketio.emit('room_state_refresh', {'room_id': room_id}, room=f"user_{m.user_id}")
+    except Exception:
+        pass
+    return jsonify({'success': True, 'writer_role_ids': json.loads(channel.writer_role_ids_json or '[]')})
 
 # --- USER SETTINGS ---
 
@@ -446,9 +521,7 @@ def mark_channel_read(channel_id):
 def delete_room_avatar(room_id):
     # Delete room avatar
     room = Room.query.get_or_404(room_id)
-    member = Member.query.filter_by(user_id=current_user.id, room_id=room_id).first()
-    
-    if not member or member.role not in ['owner', 'admin']:
+    if not has_room_permission(current_user.id, room, 'manage_server'):
         return jsonify({'error': 'no rights'}), 403
     
     if room.avatar_url:
@@ -657,12 +730,11 @@ def delete_message(message_id):
     if not room:
         return jsonify({'error': 'room not found'}), 404
     
-    role = get_role(current_user.id, room.id)
     try:
         is_owner_message = int(message.user_id) == int(current_user.id)
     except Exception:
         is_owner_message = (message.user_id == current_user.id)
-    can_delete = is_owner_message or (role in ['owner', 'admin'])
+    can_delete = is_owner_message or has_room_permission(current_user.id, room, 'delete_messages')
     
     if not can_delete:
         return jsonify({'error': 'no access'}), 403
@@ -822,11 +894,9 @@ def delete_room(room_id):
     # Delete room
     room = Room.query.get_or_404(room_id)
     member = Member.query.filter_by(user_id=current_user.id, room_id=room_id).first()
-    
     if not member:
         return jsonify({'error': 'you are not a member'}), 403
-    
-    if member.role not in ['owner', 'admin']:
+    if not has_room_permission(current_user.id, room, 'delete_server'):
         return jsonify({'error': 'no rights to delete the server'}), 403
     
     # Delete all members first
@@ -852,7 +922,7 @@ def leave_room(room_id):
     
     # Prevent banned users from leaving (to preserve their ban record)
     # Check if user is banned from this room
-    room_ban = RoomBan.query.filter_by(user_id=current_user.id, room_id=room_id).first()
+    room_ban = get_active_room_ban(current_user.id, room_id)
     if room_ban:
         print(f"[LEAVE ROOM] User {current_user.id} attempted to leave while banned from room {room_id}")
         return jsonify({'error': 'you are banned from this server'}), 403
@@ -887,8 +957,9 @@ def generate_invite(room_id):
     # Generate invite link
     room = Room.query.get_or_404(room_id)
     member = Member.query.filter_by(user_id=current_user.id, room_id=room_id).first()
-    
-    if not member or member.role not in ['owner', 'admin']:
+    if not member:
+        return jsonify({'error': 'no membership'}), 403
+    if not has_room_permission(current_user.id, room, 'invite_members'):
         return jsonify({'error': 'no rights to create a invite'}), 403
     
     import secrets
@@ -907,6 +978,10 @@ def join_room_by_invite(token):
     # Join room by invite token
     room = Room.query.filter_by(invite_token=token).first_or_404()
     
+    room_ban = get_active_room_ban(current_user.id, room.id)
+    if room_ban:
+        return jsonify({'error': 'you are banned in this room'}), 403
+
     existing_member = Member.query.filter_by(user_id=current_user.id, room_id=room.id).first()
     if existing_member:
         return redirect(url_for('main.view_room', room_id=room.id))
@@ -967,12 +1042,27 @@ def get_user_rooms():
     rooms = Room.query.join(Member).filter(Member.user_id == current_user.id).all()
     
     for room in rooms:
+        my_member = Member.query.filter_by(user_id=current_user.id, room_id=room.id).first()
+        perms = get_user_permissions(current_user.id, room.id)
+        room_name = room.name
+        if room.type == 'dm':
+            try:
+                other_member = next((m for m in room.members if int(m.user_id) != int(current_user.id)), None)
+                if other_member and other_member.user and other_member.user.username:
+                    room_name = other_member.user.username
+            except Exception:
+                room_name = room.name
+
         room_dict = {
             'id': room.id,
-            'name': room.name,
+            'name': room_name,
             'type': room.type,
+            'my_role': my_member.role if my_member else 'member',
+            'my_permissions': sorted(list(perms)),
+            'is_public': bool(room.is_public),
             'description': getattr(room, 'description', None) or '',
             'avatar_url': room.avatar_url,
+            'banner_url': getattr(room, 'banner_url', None),
             'member_count': len(room.members),
             'channels': []
         }
@@ -983,7 +1073,8 @@ def get_user_rooms():
                 'name': channel.name,
                 'description': channel.description,
                 'icon_emoji': channel.icon_emoji,
-                'icon_image_url': channel.icon_image_url
+                'icon_image_url': channel.icon_image_url,
+                'writer_role_ids': json.loads(channel.writer_role_ids_json or '[]') if getattr(channel, 'writer_role_ids_json', None) else [],
             }
             room_dict['channels'].append(channel_dict)
         
@@ -1016,7 +1107,8 @@ def get_room_members(room_id):
             'avatar_url': m.user.avatar_url or 'https://placehold.co/50x50',
             'role': m.role,
             'role_ids': sorted(role_map.get(m.user.id, [])),
-            'presence_status': 'hidden' if getattr(m.user, 'hide_status', False) else (m.user.presence_status or 'offline')
+            'presence_status': 'hidden' if getattr(m.user, 'hide_status', False) else (m.user.presence_status or 'offline'),
+            'muted_until': m.muted_until.isoformat() if getattr(m, 'muted_until', None) else None,
         })
 
     payload.sort(key=lambda u: u['username'].lower())
@@ -1032,18 +1124,31 @@ def room_settings_api(room_id):
         return jsonify({'error': 'Access denied'}), 403
 
     if request.method == 'GET':
+        perms = get_user_permissions(current_user.id, room_id)
         return jsonify({
             'id': room.id,
             'name': room.name,
+            'description': (room.description or ''),
             'type': room.type,
+            'is_public': bool(room.is_public),
             'owner_id': room.owner_id,
             'avatar_url': room.avatar_url,
+            'banner_url': room.banner_url,
             'permissions': {
-                'can_manage_server': bool(member.role in ['owner', 'admin'])
+                'can_manage_server': has_room_permission(current_user.id, room, 'manage_server'),
+                'can_manage_roles': has_room_permission(current_user.id, room, 'manage_roles'),
+                'can_manage_channels': has_room_permission(current_user.id, room, 'manage_channels'),
+                'can_invite_members': has_room_permission(current_user.id, room, 'invite_members'),
+                'can_delete_server': has_room_permission(current_user.id, room, 'delete_server'),
+                'can_delete_messages': has_room_permission(current_user.id, room, 'delete_messages'),
+                'can_kick_members': has_room_permission(current_user.id, room, 'kick_members'),
+                'can_ban_members': has_room_permission(current_user.id, room, 'ban_members'),
+                'can_mute_members': has_room_permission(current_user.id, room, 'mute_members'),
+                'granted_permissions': sorted(list(perms)),
             }
         })
 
-    if member.role not in ['owner', 'admin']:
+    if not has_room_permission(current_user.id, room, 'manage_server'):
         return jsonify({'error': 'Access denied'}), 403
 
     data = request.get_json(silent=True) or {}
@@ -1052,9 +1157,72 @@ def room_settings_api(room_id):
         if len(next_name) < 2 or len(next_name) > 150:
             return jsonify({'error': 'room name must be 2..150 chars'}), 400
         room.name = next_name
+    if 'description' in data:
+        room.description = str(data.get('description') or '').strip()[:500]
+    if 'is_public' in data:
+        room.is_public = bool(data.get('is_public'))
 
     db.session.commit()
-    return jsonify({'success': True, 'room': {'id': room.id, 'name': room.name}})
+    return jsonify({
+        'success': True,
+        'room': {
+            'id': room.id,
+            'name': room.name,
+            'description': room.description or '',
+            'is_public': bool(room.is_public),
+            'avatar_url': room.avatar_url,
+            'banner_url': room.banner_url,
+        }
+    })
+
+
+@api_bp.route('/api/v1/room/<int:room_id>/avatar', methods=['POST'])
+@login_required
+def upload_room_avatar_api(room_id):
+    room = Room.query.get_or_404(room_id)
+    if not has_room_permission(current_user.id, room, 'manage_server'):
+        return jsonify({'error': 'Access denied'}), 403
+    if 'avatar' not in request.files:
+        return jsonify({'error': 'avatar file is required'}), 400
+    file = request.files['avatar']
+    if not file or not file.filename:
+        return jsonify({'error': 'avatar file is required'}), 400
+    filepath = save_file(file, 'room_avatars')
+    if not filepath:
+        return jsonify({'error': 'failed to save avatar'}), 500
+    room.avatar_url = filepath
+    db.session.commit()
+    return jsonify({'success': True, 'avatar_url': room.avatar_url})
+
+
+@api_bp.route('/api/v1/room/<int:room_id>/banner', methods=['POST'])
+@login_required
+def upload_room_banner_api(room_id):
+    room = Room.query.get_or_404(room_id)
+    if not has_room_permission(current_user.id, room, 'manage_server'):
+        return jsonify({'error': 'Access denied'}), 403
+    if 'banner' not in request.files:
+        return jsonify({'error': 'banner file is required'}), 400
+    file = request.files['banner']
+    if not file or not file.filename:
+        return jsonify({'error': 'banner file is required'}), 400
+    filepath = save_file(file, 'room_avatars')
+    if not filepath:
+        return jsonify({'error': 'failed to save banner'}), 500
+    room.banner_url = filepath
+    db.session.commit()
+    return jsonify({'success': True, 'banner_url': room.banner_url})
+
+
+@api_bp.route('/api/v1/room/<int:room_id>/banner/delete', methods=['POST'])
+@login_required
+def delete_room_banner_api(room_id):
+    room = Room.query.get_or_404(room_id)
+    if not has_room_permission(current_user.id, room, 'manage_server'):
+        return jsonify({'error': 'Access denied'}), 403
+    room.banner_url = None
+    db.session.commit()
+    return jsonify({'success': True})
 
 
 @api_bp.route('/api/v1/room/<int:room_id>/roles', methods=['GET'])
@@ -1081,7 +1249,8 @@ def get_room_roles(room_id):
             'mention_tag': role.mention_tag,
             'is_system': bool(role.is_system),
             'can_be_mentioned_by_everyone': bool(role.can_be_mentioned_by_everyone),
-            'allowed_source_role_ids': allowed_source_roles
+            'allowed_source_role_ids': allowed_source_roles,
+            'permissions': sorted(list(parse_role_permissions(role))),
         })
 
     data.sort(key=lambda r: r['name'].lower())
@@ -1092,7 +1261,7 @@ def get_room_roles(room_id):
 @login_required
 def create_room_role(room_id):
     room = Room.query.get_or_404(room_id)
-    if not has_room_admin_access(current_user.id, room):
+    if not has_room_permission(current_user.id, room, 'manage_roles'):
         return jsonify({'error': 'Access denied'}), 403
 
     data = request.get_json(silent=True) or {}
@@ -1113,7 +1282,8 @@ def create_room_role(room_id):
         name=name,
         mention_tag=mention_tag,
         is_system=False,
-        can_be_mentioned_by_everyone=bool(data.get('can_be_mentioned_by_everyone', False))
+        can_be_mentioned_by_everyone=bool(data.get('can_be_mentioned_by_everyone', False)),
+        permissions_json=json.dumps([p for p in data.get('permissions', []) if p in ROLE_PERMISSION_KEYS]),
     )
     db.session.add(role)
     db.session.commit()
@@ -1124,7 +1294,7 @@ def create_room_role(room_id):
 @login_required
 def update_room_role(room_id, role_id):
     room = Room.query.get_or_404(room_id)
-    if not has_room_admin_access(current_user.id, room):
+    if not has_room_permission(current_user.id, room, 'manage_roles'):
         return jsonify({'error': 'Access denied'}), 403
 
     role = Role.query.filter_by(id=role_id, room_id=room_id).first_or_404()
@@ -1148,6 +1318,37 @@ def update_room_role(room_id, role_id):
         role.name = new_name
         role.mention_tag = new_tag
 
+    if 'permissions' in data:
+        perms = data.get('permissions', [])
+        if not isinstance(perms, list):
+            return jsonify({'error': 'permissions must be list'}), 400
+        cleaned = [p for p in perms if p in ROLE_PERMISSION_KEYS]
+        role.permissions_json = json.dumps(sorted(list(set(cleaned))))
+
+    db.session.commit()
+    return jsonify({'success': True})
+
+
+@api_bp.route('/api/v1/room/<int:room_id>/roles/<int:role_id>', methods=['DELETE'])
+@login_required
+def delete_room_role(room_id, role_id):
+    room = Room.query.get_or_404(room_id)
+    if not has_room_permission(current_user.id, room, 'manage_roles'):
+        return jsonify({'error': 'Access denied'}), 403
+
+    role = Role.query.filter_by(id=role_id, room_id=room_id).first_or_404()
+    if role.is_system:
+        return jsonify({'error': 'cannot delete system role'}), 400
+
+    RoleMentionPermission.query.filter(
+        RoleMentionPermission.room_id == room_id,
+        or_(
+            RoleMentionPermission.source_role_id == role.id,
+            RoleMentionPermission.target_role_id == role.id,
+        )
+    ).delete(synchronize_session=False)
+    MemberRole.query.filter_by(room_id=room_id, role_id=role.id).delete(synchronize_session=False)
+    db.session.delete(role)
     db.session.commit()
     return jsonify({'success': True})
 
@@ -1156,7 +1357,7 @@ def update_room_role(room_id, role_id):
 @login_required
 def update_role_mention_permissions(room_id, target_role_id):
     room = Room.query.get_or_404(room_id)
-    if not has_room_admin_access(current_user.id, room):
+    if not has_room_permission(current_user.id, room, 'manage_roles'):
         return jsonify({'error': 'Access denied'}), 403
 
     target_role = Role.query.filter_by(id=target_role_id, room_id=room_id).first_or_404()
@@ -1190,7 +1391,7 @@ def update_role_mention_permissions(room_id, target_role_id):
 @login_required
 def assign_member_roles(room_id, user_id):
     room = Room.query.get_or_404(room_id)
-    if not has_room_admin_access(current_user.id, room):
+    if not has_room_permission(current_user.id, room, 'manage_roles'):
         return jsonify({'error': 'Access denied'}), 403
 
     member = Member.query.filter_by(room_id=room_id, user_id=user_id).first()
@@ -1230,6 +1431,11 @@ def assign_member_roles(room_id, user_id):
         member.role = 'member'
 
     db.session.commit()
+    try:
+        for m in Member.query.filter_by(room_id=room_id).all():
+            socketio.emit('room_state_refresh', {'room_id': room_id}, room=f"user_{m.user_id}")
+    except Exception:
+        pass
     return jsonify({'success': True, 'user_id': user_id, 'role_ids': sorted(valid_ids)})
 
 @api_bp.route('/api/v1/channel/<int:channel_id>/messages', methods=['GET'])
@@ -1301,6 +1507,10 @@ def join_room_api(room_id):
     if getattr(current_user, 'is_banned', False):
         return jsonify({'error': 'your accound is blocked'}), 403
 
+    room_ban = get_active_room_ban(current_user.id, room_id)
+    if room_ban:
+        return jsonify({'error': 'you are banned in this room'}), 403
+
     # Check if already member
     existing = Member.query.filter_by(user_id=current_user.id, room_id=room_id).first()
     if existing:
@@ -1352,6 +1562,17 @@ def ban_user(user_id):
     data = request.json or {}
     ban_reason = data.get('reason', 'tos violation')
     ban_ip = data.get('ban_ip', True)
+    duration_raw = data.get('duration') or data.get('ban_duration') or data.get('ban_for')
+    minutes_raw = data.get('ban_minutes')
+    duration_minutes = None
+    if minutes_raw is not None and str(minutes_raw).strip() != '':
+        try:
+            duration_minutes = max(1, int(minutes_raw))
+        except Exception:
+            duration_minutes = None
+    if duration_minutes is None:
+        duration_minutes = parse_duration_minutes(duration_raw)
+    banned_until = datetime.utcnow() + timedelta(minutes=duration_minutes) if duration_minutes else None
     room_id = data.get('room_id')
     try:
         room_id = int(room_id) if room_id is not None and room_id != '' else None
@@ -1366,9 +1587,7 @@ def ban_user(user_id):
         allowed = False
         if current_user.is_superuser:
             allowed = True
-        if room and room.owner_id == current_user.id:
-            allowed = True
-        if admin_member and admin_member.role in ['owner', 'admin']:
+        if room and has_room_permission(current_user.id, room, 'ban_members'):
             allowed = True
         if not allowed:
             debug = {
@@ -1404,9 +1623,15 @@ def ban_user(user_id):
                     user_id=user_id,
                     banned_by_id=current_user.id,
                     reason=ban_reason,
+                    banned_until=banned_until,
                     messages_deleted=data.get('delete_messages', False)
                 )
                 db.session.add(room_ban)
+            else:
+                existing_ban.reason = ban_reason
+                existing_ban.banned_by_id = current_user.id
+                existing_ban.banned_until = banned_until
+                existing_ban.messages_deleted = bool(data.get('delete_messages', False))
             
             # Delete the member record so server doesn't appear in dashboard
             db.session.delete(target_membership)
@@ -1427,7 +1652,12 @@ def ban_user(user_id):
             except Exception:
                 pass
 
-            return jsonify({'success': True, 'message': f'user {user.username} banned in room', 'room_id': room_id})
+            return jsonify({
+                'success': True,
+                'message': f'user {user.username} banned in room',
+                'room_id': room_id,
+                'banned_until': banned_until.isoformat() if banned_until else None
+            })
         else:
             return jsonify({'error': 'user is not in the room'}), 404
 
@@ -1557,9 +1787,10 @@ def unban_user(user_id):
             return jsonify({'error': 'not enough rights no unban in this room', 'debug': debug}), 403
 
         # Delete the RoomBan record to unban
-        room_ban = RoomBan.query.filter_by(user_id=user_id, room_id=room_id).first()
-        if room_ban:
-            db.session.delete(room_ban)
+        room_bans = RoomBan.query.filter_by(user_id=user_id, room_id=room_id).all()
+        if room_bans:
+            for room_ban in room_bans:
+                db.session.delete(room_ban)
             db.session.commit()
             return jsonify({'success': True, 'message': f'user {user.username} unbanned in room', 'room_id': room_id})
         return jsonify({'error': 'user is not banned in this room'}), 400
@@ -1689,9 +1920,7 @@ def kick_user_from_room(user_id, room_id):
     allowed = False
     if current_user.is_superuser:
         allowed = True
-    if room and room.owner_id == current_user.id:
-        allowed = True
-    if admin_member and admin_member.role in ['owner', 'admin']:
+    if room and has_room_permission(current_user.id, room, 'kick_members'):
         allowed = True
     if not allowed:
         debug = {
@@ -1728,6 +1957,78 @@ def kick_user_from_room(user_id, room_id):
         'success': True,
         'message': f'user is kicked from the room'
     })
+
+
+@api_bp.route('/admin/user/<int:user_id>/mute_in_room/<int:room_id>', methods=['POST'])
+@login_required
+def mute_user_in_room(user_id, room_id):
+    try:
+        room_id = int(room_id)
+    except Exception:
+        return jsonify({'error': 'wrong room_id'}), 400
+
+    room = Room.query.get(room_id)
+    if not room:
+        return jsonify({'error': 'room is not found'}), 404
+    if not has_room_permission(current_user.id, room, 'mute_members') and not current_user.is_superuser:
+        return jsonify({'error': 'not enough rights'}), 403
+
+    target_members = Member.query.filter_by(user_id=user_id, room_id=room_id).all()
+    if not target_members:
+        return jsonify({'error': 'user is not in the room'}), 404
+
+    data = request.get_json(silent=True) or {}
+    minutes = int(data.get('minutes') or 60)
+    if minutes < 1:
+        minutes = 1
+    if minutes > 60 * 24 * 30:
+        minutes = 60 * 24 * 30
+
+    muted_until = datetime.utcnow() + timedelta(minutes=minutes)
+    for target_member in target_members:
+        target_member.muted_until = muted_until
+    db.session.commit()
+    try:
+        socketio.emit('member_mute_updated', {
+            'room_id': room_id,
+            'user_id': user_id,
+            'muted_until': muted_until.isoformat()
+        }, room=str(room_id))
+    except Exception:
+        pass
+    return jsonify({'success': True, 'muted_until': muted_until.isoformat()})
+
+
+@api_bp.route('/admin/user/<int:user_id>/unmute_in_room/<int:room_id>', methods=['POST'])
+@login_required
+def unmute_user_in_room(user_id, room_id):
+    try:
+        room_id = int(room_id)
+    except Exception:
+        return jsonify({'error': 'wrong room_id'}), 400
+
+    room = Room.query.get(room_id)
+    if not room:
+        return jsonify({'error': 'room is not found'}), 404
+    if not has_room_permission(current_user.id, room, 'mute_members') and not current_user.is_superuser:
+        return jsonify({'error': 'not enough rights'}), 403
+
+    target_members = Member.query.filter_by(user_id=user_id, room_id=room_id).all()
+    if not target_members:
+        return jsonify({'error': 'user is not in the room'}), 404
+
+    for target_member in target_members:
+        target_member.muted_until = None
+    db.session.commit()
+    try:
+        socketio.emit('member_mute_updated', {
+            'room_id': room_id,
+            'user_id': user_id,
+            'muted_until': None
+        }, room=str(room_id))
+    except Exception:
+        pass
+    return jsonify({'success': True})
 
 
 @api_bp.route('/admin/user/<int:user_id>/promote', methods=['POST'])

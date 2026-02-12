@@ -127,4 +127,33 @@ def migrate(db_engine):
             )
             set_version(conn, 4)
 
+        if current < 5:
+            if 'room' in inspector.get_table_names():
+                if not _has_column(inspector, 'room', 'description'):
+                    conn.execute(text('ALTER TABLE room ADD COLUMN description VARCHAR(500)'))
+                if not _has_column(inspector, 'room', 'banner_url'):
+                    conn.execute(text('ALTER TABLE room ADD COLUMN banner_url VARCHAR(300)'))
+            set_version(conn, 5)
+
+        if current < 6:
+            if 'role' in inspector.get_table_names():
+                if not _has_column(inspector, 'role', 'permissions_json'):
+                    conn.execute(text('ALTER TABLE role ADD COLUMN permissions_json TEXT'))
+            if 'channel' in inspector.get_table_names():
+                if not _has_column(inspector, 'channel', 'writer_role_ids_json'):
+                    conn.execute(text('ALTER TABLE channel ADD COLUMN writer_role_ids_json TEXT'))
+            set_version(conn, 6)
+
+        if current < 7:
+            if 'member' in inspector.get_table_names():
+                if not _has_column(inspector, 'member', 'muted_until'):
+                    conn.execute(text('ALTER TABLE member ADD COLUMN muted_until DATETIME'))
+            set_version(conn, 7)
+
+        if current < 8:
+            if 'room_ban' in inspector.get_table_names():
+                if not _has_column(inspector, 'room_ban', 'banned_until'):
+                    conn.execute(text('ALTER TABLE room_ban ADD COLUMN banned_until DATETIME'))
+            set_version(conn, 8)
+
         conn.commit()

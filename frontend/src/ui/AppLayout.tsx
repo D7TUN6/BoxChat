@@ -1,5 +1,6 @@
-import { useContext, useEffect, useMemo, useState } from 'react'
+import { useContext, useEffect, useMemo, useState, useCallback } from 'react'
 import { Link as RouterLink, Outlet, useLocation, useNavigate, useRouteLoaderData } from 'react-router-dom'
+import { io } from 'socket.io-client'
 import {
   Avatar,
   Badge,
@@ -15,6 +16,8 @@ import {
   ListItemButton,
   ListItemIcon,
   ListItemText,
+  Menu,
+  MenuItem,
   Popover,
   Stack,
   TextField,
@@ -32,11 +35,22 @@ import {
   Settings,
   Server,
   Sun,
+  BellOff,
+  Pencil,
+  Trash2,
   User,
 } from 'lucide-react'
 import { ThemeModeContext } from './theme-mode'
 import SettingsPage from '../views/SettingsPage'
-import { getUnreadCount, subscribeNotifications, requestBrowserNotificationPermission } from './notificationsStore'
+import {
+  addNotification,
+  getUnreadCount,
+  playNotificationSound,
+  unlockAudio,
+  showBrowserNotification,
+  subscribeNotifications,
+  requestBrowserNotificationPermission,
+} from './notificationsStore'
 
 type SessionPayload = {
   user?: {
@@ -52,9 +66,26 @@ type Room = {
   id: number
   name: string
   type: string
+  my_role?: string
+  my_permissions?: string[]
   avatar_url?: string | null
   banner_url?: string | null
   channels?: Channel[]
+}
+
+type ChannelContext = {
+  channelId: number
+  channelName: string
+  mouseX: number
+  mouseY: number
+}
+
+type ServerContext = {
+  roomId: number
+  roomName: string
+  roomType: string
+  mouseX: number
+  mouseY: number
 }
 
 const navIconSx = {
@@ -92,6 +123,21 @@ export default function AppLayout() {
   const [profileAnchorEl, setProfileAnchorEl] = useState<HTMLElement | null>(null)
   const [unread, setUnread] = useState(0)
   const [askedNotifPermission, setAskedNotifPermission] = useState(false)
+  const [canManageChannels, setCanManageChannels] = useState(false)
+  const [channelMenu, setChannelMenu] = useState<ChannelContext | null>(null)
+  const [serverMenu, setServerMenu] = useState<ServerContext | null>(null)
+  const [deleteTargetRoom, setDeleteTargetRoom] = useState<Room | null>(null)
+  const [deleteConfirmChecked, setDeleteConfirmChecked] = useState(false)
+
+  const loadRooms = useCallback(async () => {
+    const res = await fetch('/api/v1/rooms', {
+      credentials: 'include',
+      headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+    }).catch(() => null)
+    if (!res?.ok) return
+    const payload = await res.json().catch(() => null)
+    setRooms(payload?.rooms ?? [])
+  }, [])
 
   useEffect(() => {
     setUnread(getUnreadCount())
@@ -103,6 +149,7 @@ export default function AppLayout() {
     const handler = () => {
       setAskedNotifPermission(true)
       void requestBrowserNotificationPermission()
+      unlockAudio()
     }
     window.addEventListener('pointerdown', handler, { once: true })
     window.addEventListener('keydown', handler, { once: true })
@@ -113,23 +160,109 @@ export default function AppLayout() {
   }, [askedNotifPermission])
 
   useEffect(() => {
-    let active = true
-    async function loadRooms() {
-      const res = await fetch('/api/v1/rooms', {
+    const s = io({ withCredentials: true })
+    s.on('friend_request_received', (data: any) => {
+      const fromUser = String(data?.from_username || 'User')
+      const requestId = Number(data?.request_id || 0)
+      const href = '/notifications'
+      addNotification({
+        title: 'Friend request',
+        body: `${fromUser} sent you a friend request`,
+        href,
+        dedupeKey: requestId ? `friend-request-received:${requestId}` : undefined,
+      })
+      playNotificationSound()
+      showBrowserNotification('Friend request', `${fromUser} sent you a friend request`, href)
+    })
+    s.on('friend_request_updated', (data: any) => {
+      const byUser = String(data?.by_username || 'User')
+      const status = String(data?.status || '')
+      if (status !== 'accepted' && status !== 'declined') return
+      const href = '/notifications'
+      const action = status === 'accepted' ? 'accepted' : 'declined'
+      addNotification({
+        title: 'Friend request update',
+        body: `${byUser} ${action} your request`,
+        href,
+        dedupeKey: `friend-request-updated:${String(data?.request_id || '')}:${status}`,
+      })
+      playNotificationSound()
+      showBrowserNotification('Friend request update', `${byUser} ${action} your request`, href)
+    })
+    s.on('message_notification', (data: any) => {
+      const roomId = Number(data?.room_id || 0)
+      const channelId = Number(data?.channel_id || 0)
+      const messageId = Number(data?.message_id || 0)
+      const fromUser = String(data?.from_user || 'Message')
+      const snippet = String(data?.snippet || '').trim() || 'New message'
+
+      // Avoid duplicate local notification if user is already focused on the same channel.
+      let isInSameChannel = false
+      let isFocused = true
+      try {
+        const m = window.location.pathname.match(/^\/room\/(\d+)/)
+        const currentRoomId = m ? Number(m[1]) : 0
+        const currentChannelId = Number(new URLSearchParams(window.location.search).get('channel_id') || 0)
+        isInSameChannel = currentRoomId === roomId && currentChannelId === channelId
+        isFocused = document.hasFocus()
+      } catch {
+        // ignore
+      }
+      if (isInSameChannel && isFocused) return
+
+      const href = roomId && channelId ? `/room/${roomId}?channel_id=${channelId}` : '/notifications'
+      addNotification({
+        title: fromUser,
+        body: snippet,
+        href,
+        dedupeKey: messageId > 0 ? `msg-notification:${messageId}` : undefined,
+      })
+      playNotificationSound()
+      showBrowserNotification(fromUser, snippet, href)
+    })
+    s.on('new_dm_message', () => {
+      void loadRooms()
+    })
+    return () => {
+      s.disconnect()
+    }
+  }, [loadRooms])
+
+  useEffect(() => {
+    let cancelled = false
+    async function pollFriendRequests() {
+      const res = await fetch('/api/v1/friends/requests', {
         credentials: 'include',
         headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
       }).catch(() => null)
-      if (!res?.ok) return
+      if (!res?.ok || cancelled) return
       const payload = await res.json().catch(() => null)
-      if (active) {
-        setRooms(payload?.rooms ?? [])
+      if (cancelled) return
+      const incoming = Array.isArray(payload?.incoming) ? payload.incoming : []
+      for (const req of incoming) {
+        const rid = Number(req?.id || 0)
+        const username = String(req?.user?.username || 'User')
+        addNotification({
+          title: 'Friend request',
+          body: `${username} sent you a friend request`,
+          href: '/notifications',
+          dedupeKey: rid ? `friend-request-received:${rid}` : undefined,
+        })
       }
     }
-    void loadRooms()
+    void pollFriendRequests()
+    const timer = window.setInterval(() => {
+      void pollFriendRequests()
+    }, 15000)
     return () => {
-      active = false
+      cancelled = true
+      window.clearInterval(timer)
     }
-  }, [location.pathname])
+  }, [])
+
+  useEffect(() => {
+    void loadRooms()
+  }, [location.pathname, loadRooms])
 
   const dms = useMemo(() => rooms.filter((room) => room.type === 'dm'), [rooms])
   const servers = useMemo(() => rooms.filter((room) => room.type !== 'dm'), [rooms])
@@ -153,6 +286,15 @@ export default function AppLayout() {
 
   const isServerRoom = Boolean(activeRoom && activeRoom.type !== 'dm')
   const isMobileFocusedChat = Boolean(roomIdFromPath && channelIdFromUrl)
+
+  useEffect(() => {
+    if (!activeRoom || activeRoom.type === 'dm') {
+      setCanManageChannels(false)
+      return
+    }
+    const perms = Array.isArray(activeRoom.my_permissions) ? activeRoom.my_permissions : []
+    setCanManageChannels(perms.includes('manage_channels') || activeRoom.my_role === 'owner' || activeRoom.my_role === 'admin')
+  }, [activeRoom?.id, activeRoom?.type, activeRoom?.my_role, activeRoom?.my_permissions])
 
   async function handleCreateRoom() {
     const name = roomName.trim()
@@ -242,6 +384,22 @@ export default function AppLayout() {
             <Compass size={20} />
           </IconButton>
         </Tooltip>
+        <Tooltip title="Notifications">
+          <IconButton
+            component={RouterLink}
+            to="/notifications"
+            sx={{
+              ...navIconSx,
+              width: { xs: 44, md: 48 },
+              height: { xs: 44, md: 48 },
+              ...(isNotifications ? { color: 'primary.main', borderColor: 'primary.main', borderRadius: 2.2 } : {}),
+            }}
+          >
+            <Badge color="error" badgeContent={unread ? unread : 0} invisible={!unread}>
+              <Bell size={20} />
+            </Badge>
+          </IconButton>
+        </Tooltip>
         <Divider flexItem sx={{ my: 0.3, display: { xs: 'none', md: 'block' } }} />
 
         <Box className="bc-scroll" sx={{ width: '100%', px: 1, overflowY: 'auto', overflowX: 'hidden', flex: 1, minHeight: 0 }}>
@@ -266,6 +424,16 @@ export default function AppLayout() {
                     />
                     <IconButton
                       onClick={() => navigate(`/room/${room.id}${room.channels?.[0] ? `?channel_id=${room.channels[0].id}` : ''}`)}
+                      onContextMenu={(e) => {
+                        e.preventDefault()
+                        setServerMenu({
+                          roomId: room.id,
+                          roomName: room.name,
+                          roomType: room.type,
+                          mouseX: e.clientX + 2,
+                          mouseY: e.clientY - 6,
+                        })
+                      }}
                       sx={{
                         ...serverIconSx,
                         width: { xs: 44, md: 48 },
@@ -364,6 +532,15 @@ export default function AppLayout() {
                     to={`/room/${activeRoom?.id}?channel_id=${ch.id}`}
                     selected={Number(channelIdFromUrl ?? 0) === Number(ch.id)}
                     sx={{ borderRadius: 2, mb: 0.25 }}
+                    onContextMenu={(e) => {
+                      e.preventDefault()
+                      setChannelMenu({
+                        channelId: ch.id,
+                        channelName: ch.name,
+                        mouseX: e.clientX + 2,
+                        mouseY: e.clientY - 6,
+                      })
+                    }}
                   >
                     <ListItemIcon sx={{ minWidth: 34 }}>
                       <Hash size={16} />
@@ -380,7 +557,10 @@ export default function AppLayout() {
               tabIndex={0}
               sx={{
                 px: 1.4,
-                py: 1.2,
+                py: 1,
+                minHeight: 84,
+                display: 'flex',
+                alignItems: 'center',
                 borderTop: '1px solid',
                 borderColor: 'divider',
                 bgcolor: 'background.default',
@@ -388,8 +568,8 @@ export default function AppLayout() {
                 userSelect: 'none',
               }}
             >
-              <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
-                <Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 0 }}>
+              <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between" sx={{ width: '100%' }}>
+                <Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 0, flex: 1 }}>
                   <Avatar
                     src={session?.user?.avatar_url}
                     sx={{ width: 34, height: 34, bgcolor: 'primary.main', color: '#1c0f2a' }}
@@ -405,7 +585,7 @@ export default function AppLayout() {
                     </Typography>
                   </Box>
                 </Stack>
-                <Stack direction="row" spacing={0.2}>
+                <Stack direction="row" spacing={0.2} sx={{ ml: 'auto', pl: 1.2 }}>
                   <IconButton
                     size="small"
                     onClick={(e) => {
@@ -490,7 +670,10 @@ export default function AppLayout() {
               tabIndex={0}
               sx={{
                 px: 1.4,
-                py: 1.2,
+                py: 1,
+                minHeight: 84,
+                display: 'flex',
+                alignItems: 'center',
                 borderTop: '1px solid',
                 borderColor: 'divider',
                 bgcolor: 'background.default',
@@ -498,8 +681,8 @@ export default function AppLayout() {
                 userSelect: 'none',
               }}
             >
-              <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
-                <Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 0 }}>
+              <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between" sx={{ width: '100%' }}>
+                <Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 0, flex: 1 }}>
                   <Avatar
                     src={session?.user?.avatar_url}
                     sx={{ width: 34, height: 34, bgcolor: 'primary.main', color: '#1c0f2a' }}
@@ -515,7 +698,7 @@ export default function AppLayout() {
                     </Typography>
                   </Box>
                 </Stack>
-                <Stack direction="row" spacing={0.2}>
+                <Stack direction="row" spacing={0.2} sx={{ ml: 'auto', pl: 1.2 }}>
                   <IconButton
                     size="small"
                     onClick={(e) => {
@@ -561,6 +744,8 @@ export default function AppLayout() {
             minHeight: 0,
             overflowY: 'auto',
             overflowX: 'hidden',
+            px: { xs: 1, md: location.pathname.startsWith('/room/') ? 0 : 2.2 },
+            py: { xs: 1, md: location.pathname.startsWith('/room/') ? 0 : 1.8 },
             pb: { xs: 'env(safe-area-inset-bottom)', md: 0 },
           }}
         >
@@ -757,6 +942,180 @@ export default function AppLayout() {
           </Box>
         </Box>
       </Popover>
+
+      <Menu
+        open={Boolean(channelMenu)}
+        onClose={() => setChannelMenu(null)}
+        anchorReference="anchorPosition"
+        anchorPosition={channelMenu ? { top: channelMenu.mouseY, left: channelMenu.mouseX } : undefined}
+      >
+        <MenuItem
+          onClick={() => {
+            const raw = localStorage.getItem('bc_muted_channels_v1')
+            const parsed = raw ? JSON.parse(raw) : []
+            const current = Array.isArray(parsed) ? parsed.map((x) => Number(x)) : []
+            const cid = Number(channelMenu?.channelId || 0)
+            const next = current.includes(cid) ? current.filter((x) => x !== cid) : [...current, cid]
+            localStorage.setItem('bc_muted_channels_v1', JSON.stringify(next))
+            setChannelMenu(null)
+          }}
+        >
+          <ListItemIcon><BellOff size={16} /></ListItemIcon>
+          <ListItemText>Mute channel</ListItemText>
+        </MenuItem>
+
+        {canManageChannels ? (
+          <MenuItem
+            onClick={async () => {
+              if (!activeRoom || !channelMenu) return
+              const nextName = window.prompt('New channel name', channelMenu.channelName)?.trim()
+              if (!nextName) return
+              const body = new URLSearchParams()
+              body.set('name', nextName)
+              await fetch(`/room/${activeRoom.id}/channel/${channelMenu.channelId}/edit`, {
+                method: 'POST',
+                credentials: 'include',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: body.toString(),
+              }).catch(() => null)
+              setChannelMenu(null)
+              window.location.reload()
+            }}
+          >
+            <ListItemIcon><Pencil size={16} /></ListItemIcon>
+            <ListItemText>Rename channel</ListItemText>
+          </MenuItem>
+        ) : null}
+
+        {canManageChannels ? (
+          <MenuItem
+            onClick={async () => {
+              if (!activeRoom || !channelMenu) return
+              if (!window.confirm(`Delete channel "${channelMenu.channelName}"?`)) return
+              await fetch(`/room/${activeRoom.id}/channel/${channelMenu.channelId}/delete`, {
+                method: 'POST',
+                credentials: 'include',
+                headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+              }).catch(() => null)
+              setChannelMenu(null)
+              window.location.reload()
+            }}
+          >
+            <ListItemIcon><Trash2 size={16} /></ListItemIcon>
+            <ListItemText>Delete channel</ListItemText>
+          </MenuItem>
+        ) : null}
+      </Menu>
+
+      <Menu
+        open={Boolean(serverMenu)}
+        onClose={() => setServerMenu(null)}
+        anchorReference="anchorPosition"
+        anchorPosition={serverMenu ? { top: serverMenu.mouseY, left: serverMenu.mouseX } : undefined}
+      >
+        {(() => {
+          const target = rooms.find((r) => Number(r.id) === Number(serverMenu?.roomId))
+          const perms = Array.isArray(target?.my_permissions) ? target?.my_permissions : []
+          const canInvite = Boolean(perms.includes('invite_members') || target?.my_role === 'owner' || target?.my_role === 'admin')
+          if (!canInvite) return null
+          return (
+            <MenuItem
+              onClick={async () => {
+                if (!serverMenu) return
+                const res = await fetch(`/room/${serverMenu.roomId}/invite`, {
+                  method: 'POST',
+                  credentials: 'include',
+                  headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+                }).catch(() => null)
+                const payload = await res?.json().catch(() => null)
+                const url = payload?.invite_url
+                if (url) {
+                  try {
+                    await navigator.clipboard.writeText(url)
+                  } catch {
+                    // ignore
+                  }
+                  window.alert('Invite link copied')
+                }
+                setServerMenu(null)
+              }}
+            >
+              <ListItemText>Invite</ListItemText>
+            </MenuItem>
+          )
+        })()}
+        <MenuItem
+          onClick={async () => {
+            if (!serverMenu) return
+            const endpoint = serverMenu.roomType === 'dm' ? `/room/${serverMenu.roomId}/delete_dm` : `/room/${serverMenu.roomId}/leave`
+            await fetch(endpoint, {
+              method: 'POST',
+              credentials: 'include',
+              headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+            }).catch(() => null)
+            setServerMenu(null)
+            window.location.href = '/'
+          }}
+        >
+          <ListItemText>{serverMenu?.roomType === 'dm' ? 'Delete DM' : 'Leave'}</ListItemText>
+        </MenuItem>
+        {(() => {
+          const target = rooms.find((r) => Number(r.id) === Number(serverMenu?.roomId))
+          const canDelete = Boolean(target?.my_permissions?.includes('delete_server') || target?.my_role === 'owner' || target?.my_role === 'admin')
+          if (!canDelete) return null
+          return (
+            <MenuItem
+              onClick={() => {
+                if (!target) return
+                setDeleteTargetRoom(target)
+                setDeleteConfirmChecked(false)
+                setServerMenu(null)
+              }}
+            >
+              <ListItemText>Delete</ListItemText>
+            </MenuItem>
+          )
+        })()}
+      </Menu>
+
+      <Dialog open={Boolean(deleteTargetRoom)} onClose={() => setDeleteTargetRoom(null)} fullWidth maxWidth="xs">
+        <DialogTitle>Delete Server</DialogTitle>
+        <DialogContent>
+          <Typography sx={{ mb: 1.2 }}>
+            Are you sure you want to delete <b>{deleteTargetRoom?.name}</b>? This action cannot be undone.
+          </Typography>
+          <Box
+            role="button"
+            tabIndex={0}
+            onClick={() => setDeleteConfirmChecked((v) => !v)}
+            sx={{ display: 'flex', alignItems: 'center', gap: 1, cursor: 'pointer', userSelect: 'none' }}
+          >
+            <Box sx={{ width: 18, height: 18, borderRadius: 0.8, border: '1px solid', borderColor: 'divider', bgcolor: deleteConfirmChecked ? 'primary.main' : 'transparent' }} />
+            <Typography>I confirm deletion</Typography>
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteTargetRoom(null)}>Cancel</Button>
+          <Button
+            color="error"
+            variant="contained"
+            disabled={!deleteConfirmChecked}
+            onClick={async () => {
+              const rid = deleteTargetRoom?.id
+              if (!rid) return
+              await fetch(`/room/${rid}/delete`, {
+                method: 'POST',
+                credentials: 'include',
+                headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+              }).catch(() => null)
+              setDeleteTargetRoom(null)
+              window.location.href = '/'
+            }}
+          >
+            Continue
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   )
 }
