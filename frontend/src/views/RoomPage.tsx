@@ -16,7 +16,7 @@ import {
 } from '@mui/material'
 import { useTheme } from '@mui/material/styles'
 import useMediaQuery from '@mui/material/useMediaQuery'
-import { ArrowDown, ArrowLeft, CornerUpLeft, Forward, MoreHorizontal, Reply, SmilePlus, Download, FileText, Settings2 } from 'lucide-react'
+import { ArrowDown, ArrowLeft, CornerUpLeft, Forward, MoreHorizontal, Reply, SmilePlus, Download, FileText, Settings2, Users } from 'lucide-react'
 import { io, Socket } from 'socket.io-client'
 import CustomVideoPlayer from '../ui/CustomVideoPlayer'
 import CustomAudioPlayer from '../ui/CustomAudioPlayer'
@@ -24,11 +24,18 @@ import UserCardPopover from '../ui/UserCardPopover'
 import ChatComposer from '../ui/ChatComposer'
 import MessageContextMenu from '../ui/MessageContextMenu'
 import ServerSettingsDialog from '../ui/ServerSettingsDialog'
-import { addNotification, showBrowserNotification } from '../ui/notificationsStore'
+import { addNotification, clearNotificationsByHref, playNotificationSound, showBrowserNotification } from '../ui/notificationsStore'
 
 type SessionPayload = { user?: { id: number; username: string } }
-type Channel = { id: number; name: string; description?: string }
-type Room = { id: number; name: string; channels: Channel[]; type?: string }
+type Channel = { id: number; name: string; description?: string; writer_role_ids?: number[] }
+type Room = {
+  id: number
+  name: string
+  channels: Channel[]
+  type?: string
+  my_role?: string
+  my_permissions?: string[]
+}
 type MessageItem = {
   id: number
   user_id: number
@@ -41,6 +48,7 @@ type MessageItem = {
   reactions?: Record<string, string[]>
   reply_to_id?: number | null
   reply_to?: { id: number; username: string; snippet: string } | null
+  mention_me?: boolean
 }
 
 type RenderRow =
@@ -52,8 +60,47 @@ type RoomMember = {
   role?: string
   avatar_url?: string | null
   presence_status?: string
+  role_ids?: number[]
+  muted_until?: string | null
 }
-type RoomRole = { id: number; name: string; mention_tag: string }
+type RoomRole = { id: number; name: string; mention_tag: string; is_system?: boolean }
+
+function parseServerDateMs(value?: string | null): number | null {
+  const raw = String(value || '').trim()
+  if (!raw) return null
+  let s = raw.replace(' ', 'T')
+  // Python often returns naive UTC timestamps; treat them as UTC.
+  if (!/[zZ]|[+\-]\d{2}:\d{2}$/.test(s)) {
+    s += 'Z'
+  }
+  // Keep milliseconds precision for cross-browser consistency.
+  s = s.replace(/\.(\d{3})\d+(?=[zZ]|[+\-]\d{2}:\d{2}$)/, '.$1')
+  const t = Date.parse(s)
+  return Number.isFinite(t) ? t : null
+}
+
+function normalizeMembersPayload(input: RoomMember[]): RoomMember[] {
+  const map = new Map<number, RoomMember>()
+  for (const m of input || []) {
+    const id = Number(m.id || 0)
+    if (!id) continue
+    const prev = map.get(id)
+    if (!prev) {
+      map.set(id, m)
+      continue
+    }
+    const prevMuted = parseServerDateMs(prev.muted_until)
+    const curMuted = parseServerDateMs(m.muted_until)
+    const prevScore = prev.role === 'owner' ? 3 : prev.role === 'admin' ? 2 : 1
+    const curScore = m.role === 'owner' ? 3 : m.role === 'admin' ? 2 : 1
+    const pickCurrent =
+      (curMuted ?? -1) > (prevMuted ?? -1) ||
+      curScore > prevScore ||
+      (Array.isArray(m.role_ids) && (m.role_ids?.length || 0) > (prev.role_ids?.length || 0))
+    map.set(id, pickCurrent ? m : prev)
+  }
+  return Array.from(map.values())
+}
 
 export default function RoomPage() {
   const theme = useTheme()
@@ -75,6 +122,7 @@ export default function RoomPage() {
   const [input, setInput] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [mobileMembersOpen, setMobileMembersOpen] = useState(false)
   const [sendingFile, setSendingFile] = useState(false)
 
   const [msgMenu, setMsgMenu] = useState<{ mouseX: number; mouseY: number; msg: MessageItem } | null>(null)
@@ -91,6 +139,7 @@ export default function RoomPage() {
   const lastChannelIdRef = useRef<number | null>(null)
   const [jumpToPresent, setJumpToPresent] = useState(false)
   const [highlightMsgId, setHighlightMsgId] = useState<number | null>(null)
+  const [unreadMentionIds, setUnreadMentionIds] = useState<Set<number>>(new Set())
   const pendingBottomRef = useRef(false)
   const prefetchingRef = useRef(false)
   const pendingPrependRef = useRef<{ prevHeight: number; prevTop: number } | null>(null)
@@ -100,7 +149,51 @@ export default function RoomPage() {
 
   const myMember = useMemo(() => members.find((m) => m.id === session?.user?.id), [members, session?.user?.id])
   const isRoomAdmin = myMember?.role === 'owner' || myMember?.role === 'admin'
+  const hasManageChannelsPerm = Boolean(room?.my_permissions?.includes('manage_channels'))
+  const isMutedInRoom = useMemo(() => {
+    const ts = myMember?.muted_until
+    if (!ts) return false
+    const t = parseServerDateMs(ts)
+    return t !== null && t > Date.now()
+  }, [myMember?.muted_until])
+  const mutedUntilLabel = useMemo(() => {
+    const ts = myMember?.muted_until
+    if (!ts) return ''
+    const t = parseServerDateMs(ts)
+    if (t === null || t <= Date.now()) return ''
+    try {
+      return new Date(t).toLocaleString()
+    } catch {
+      return ''
+    }
+  }, [myMember?.muted_until])
   const activeChannel = useMemo(() => room?.channels.find((c) => c.id === channelId) ?? null, [room?.channels, channelId])
+  const unreadMentionsStorageKey = useMemo(
+    () => `bc_unread_mentions_v1:${roomId || '0'}:${channelId || 0}`,
+    [roomId, channelId],
+  )
+  const canWriteInChannel = useMemo(() => {
+    if (!room) return false
+    if (isMutedInRoom) return false
+    if (room.type === 'broadcast' && !isRoomAdmin && !hasManageChannelsPerm) return false
+    const requiredRoleIds = Array.isArray(activeChannel?.writer_role_ids)
+      ? activeChannel.writer_role_ids.filter((x) => Number.isFinite(Number(x)))
+      : []
+    if (!requiredRoleIds.length) return true
+    if (isRoomAdmin) return true
+    const myRoleIds = Array.isArray(myMember?.role_ids) ? myMember.role_ids : []
+    return requiredRoleIds.some((rid) => myRoleIds.includes(Number(rid)))
+  }, [room, activeChannel?.writer_role_ids, isMutedInRoom, isRoomAdmin, hasManageChannelsPerm, myMember?.role_ids])
+
+  function isMentioningMe(content: string, mentionedUserIds?: number[]): boolean {
+    const myId = Number(session?.user?.id || 0)
+    const myName = String(session?.user?.username || '').toLowerCase()
+    if (!myId) return false
+    if (Array.isArray(mentionedUserIds) && mentionedUserIds.includes(myId)) return true
+    if (!myName) return false
+    const tokens = (content || '').match(/@[\p{L}\p{N}_-]{2,60}/gu) || []
+    return tokens.some((t) => t.slice(1).toLowerCase() === myName)
+  }
 
   const mentionCandidates = useMemo(() => {
     if (mentionStart == null) return []
@@ -115,7 +208,87 @@ export default function RoomPage() {
     return [...roleItems, ...userItems].slice(0, 10)
   }, [mentionStart, mentionQuery, roles, members, session?.user?.id])
 
-  async function loadRoomData() {
+  const roleById = useMemo(() => {
+    const map = new Map<number, RoomRole>()
+    for (const r of roles) map.set(Number(r.id), r)
+    return map
+  }, [roles])
+
+  function displayRolesForMember(m: RoomMember): string {
+    const ids = Array.isArray(m.role_ids) ? m.role_ids : []
+    const names = ids
+      .map((rid) => roleById.get(Number(rid)))
+      .filter((r): r is RoomRole => Boolean(r))
+      .filter((r) => r.mention_tag !== 'everyone')
+      .sort((a, b) => Number(b.id) - Number(a.id))
+      .map((r) => r.name)
+    if (names.length) return names.join(', ')
+    if (m.role && m.role !== 'member') return m.role
+    return 'member'
+  }
+
+  useEffect(() => {
+    if (!channelId) {
+      setUnreadMentionIds(new Set())
+      return
+    }
+    try {
+      const raw = localStorage.getItem(unreadMentionsStorageKey)
+      const parsed = raw ? JSON.parse(raw) : []
+      const ids = Array.isArray(parsed)
+        ? parsed.map((x) => Number(x)).filter((x) => Number.isFinite(x) && x > 0)
+        : []
+      setUnreadMentionIds(new Set(ids))
+    } catch {
+      setUnreadMentionIds(new Set())
+    }
+  }, [channelId, unreadMentionsStorageKey])
+
+  function persistUnreadMentions(next: Set<number>) {
+    try {
+      localStorage.setItem(unreadMentionsStorageKey, JSON.stringify(Array.from(next)))
+    } catch {
+      // ignore
+    }
+  }
+
+  function addUnreadMention(messageId: number) {
+    setUnreadMentionIds((prev) => {
+      const next = new Set(prev)
+      next.add(Number(messageId))
+      persistUnreadMentions(next)
+      return next
+    })
+  }
+
+  function clearUnreadMentions() {
+    setUnreadMentionIds((prev) => {
+      if (!prev.size) return prev
+      const next = new Set<number>()
+      persistUnreadMentions(next)
+      return next
+    })
+  }
+
+  async function markChannelAsRead() {
+    if (!channelId) return
+    const res = await fetch(`/channel/${channelId}/mark_read`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+    }).catch(() => null)
+    if (res?.ok && roomId) {
+      clearNotificationsByHref(`/room/${roomId}?channel_id=${channelId}`)
+    }
+  }
+
+  function isNearBottom(el: HTMLDivElement | null, threshold = 80): boolean {
+    if (!el) return false
+    const remaining = el.scrollHeight - el.scrollTop - el.clientHeight
+    return remaining < threshold
+  }
+
+  async function loadRoomData(options?: { preserveSelection?: boolean }) {
     const roomRes = await fetch('/api/v1/rooms', {
       credentials: 'include',
       headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
@@ -127,12 +300,28 @@ export default function RoomPage() {
 
     setRoom(foundRoom)
     const firstChannelId = foundRoom.channels?.[0]?.id ?? null
-    const nextChannelId = currentChannelIdFromUrl || (isMobile ? null : firstChannelId)
-    setChannelId(nextChannelId)
-    if (nextChannelId && !isMobile) {
+    let nextChannelId: number | null
+    if (options?.preserveSelection) {
+      const preferred = channelId || currentChannelIdFromUrl || null
+      const preferredExists = Boolean(preferred && foundRoom.channels?.some((c: Channel) => Number(c.id) === Number(preferred)))
+      nextChannelId = preferredExists ? Number(preferred) : (isMobile ? null : firstChannelId)
+    } else {
+      nextChannelId = currentChannelIdFromUrl || (isMobile ? null : firstChannelId)
+    }
+
+    if (Number(channelId || 0) !== Number(nextChannelId || 0)) {
+      setChannelId(nextChannelId)
+    }
+    const currentUrlChannelId = Number(currentChannelIdFromUrl || 0)
+    const nextUrlChannelId = Number(nextChannelId || 0)
+    if (nextUrlChannelId !== currentUrlChannelId) {
       setSearchParams((prev) => {
         const params = new URLSearchParams(prev)
-        params.set('channel_id', String(nextChannelId))
+        if (nextChannelId) {
+          params.set('channel_id', String(nextChannelId))
+        } else {
+          params.delete('channel_id')
+        }
         return params
       })
     }
@@ -148,7 +337,7 @@ export default function RoomPage() {
     ])
     if (membersRes?.ok) {
       const p = await membersRes.json().catch(() => null)
-      setMembers(p?.members ?? [])
+      setMembers(normalizeMembersPayload(p?.members ?? []))
     }
     if (rolesRes?.ok) {
       const p = await rolesRes.json().catch(() => null)
@@ -157,7 +346,7 @@ export default function RoomPage() {
   }
 
   async function sendGif(url: string) {
-    if (!socket || !roomId || !channelId) return
+    if (!socket || !roomId || !channelId || !canWriteInChannel) return
     socket.emit('send_message', {
       room_id: Number(roomId),
       channel_id: channelId,
@@ -262,6 +451,7 @@ export default function RoomPage() {
       reactions: m.reactions ?? {},
       reply_to_id: m.reply_to_id ?? null,
       reply_to: null,
+      mention_me: false,
     }))
 
     const byId = new Map<number, MessageItem>()
@@ -308,6 +498,20 @@ export default function RoomPage() {
   }, [roomId, currentChannelIdFromUrl, isMobile])
 
   useEffect(() => {
+    if (!roomId) return
+    const refresh = () => {
+      void loadRoomData({ preserveSelection: true })
+    }
+    const timer = window.setInterval(refresh, 5000)
+    const onFocus = () => refresh()
+    window.addEventListener('focus', onFocus)
+    return () => {
+      window.clearInterval(timer)
+      window.removeEventListener('focus', onFocus)
+    }
+  }, [roomId, channelId, currentChannelIdFromUrl, isMobile])
+
+  useEffect(() => {
     if (!channelId) return
     pendingBottomRef.current = true
     setHasMore(true)
@@ -317,7 +521,10 @@ export default function RoomPage() {
 
   useEffect(() => {
     if (!pendingBottomRef.current) return
-    if (!messages.length) return
+    if (!messages.length) {
+      pendingBottomRef.current = false
+      return
+    }
 
     let rowCount = 0
     for (let idx = 0; idx < messages.length; idx += 1) {
@@ -334,10 +541,12 @@ export default function RoomPage() {
       if (el) {
         el.scrollTop = el.scrollHeight
       }
+      void markChannelAsRead()
+      clearUnreadMentions()
       pendingBottomRef.current = false
       setJumpToPresent(false)
     })
-  }, [messages.length])
+  }, [messages.length, channelId])
 
   useEffect(() => {
     const pend = pendingPrependRef.current
@@ -359,8 +568,7 @@ export default function RoomPage() {
     s.on('receive_message', (data: any) => {
       if (Number(data.channel_id ?? channelId) !== Number(channelId)) return
       const el = scrollRef.current
-      const wasNearBottom =
-        !!el && (el.scrollHeight - el.scrollTop - el.clientHeight < 180)
+      const wasNearBottom = isNearBottom(el, 180)
 
       const isFocused = typeof document !== 'undefined' ? document.hasFocus() : true
       setMessages((prev) => [
@@ -377,21 +585,28 @@ export default function RoomPage() {
           reactions: data.reactions ?? {},
           reply_to_id: data?.reply_to?.id ?? null,
           reply_to: data?.reply_to ?? null,
+          mention_me: false,
         },
       ])
 
-      if (!wasNearBottom || !isFocused) {
+      const isFromOther = Number(data?.user_id || 0) !== Number(session?.user?.id || 0)
+      const mentionMe = isMentioningMe(data.msg ?? '', data?.mentions?.user_ids)
+      if (isFromOther && mentionMe && Number(data?.id || 0) > 0) {
+        addUnreadMention(Number(data.id))
+        playNotificationSound()
+      }
+      if (isFromOther && (mentionMe || !wasNearBottom || !isFocused)) {
         const msgText = (data.msg ?? '').toString().trim()
         const body = msgText ? msgText.slice(0, 180) : (data.file_url ? 'Attachment' : 'New message')
         const href = `/room/${roomId}?channel_id=${channelId}`
-        addNotification({ title: data.username ?? 'Message', body, href })
-        showBrowserNotification(data.username ?? 'Message', body, href)
-      }
-      if (wasNearBottom) {
-        window.requestAnimationFrame(() => {
-          const el2 = scrollRef.current
-          if (el2) el2.scrollTop = el2.scrollHeight
+        const messageId = Number(data?.id || 0)
+        addNotification({
+          title: data.username ?? 'Message',
+          body,
+          href,
+          dedupeKey: messageId > 0 ? `chat-msg:${channelId}:${messageId}` : undefined,
         })
+        showBrowserNotification(data.username ?? 'Message', body, href)
       }
     })
     s.on('reactions_updated', (data: any) => {
@@ -407,15 +622,60 @@ export default function RoomPage() {
       if (!messageId) return
       setMessages((prev) => prev.filter((m) => Number(m.id) !== messageId))
     })
+    s.on('command_result', (data: any) => {
+      const ok = Boolean(data?.ok)
+      const message = String(data?.message || '')
+      if (!ok && message) setError(message)
+      if (ok) setError(null)
+      void loadRoomData({ preserveSelection: true })
+    })
+    s.on('member_mute_updated', (data: any) => {
+      if (Number(data?.room_id || 0) !== Number(roomId || 0)) return
+      const targetUserId = Number(data?.user_id || 0)
+      const nextMutedUntil = data?.muted_until ? String(data.muted_until) : null
+      if (targetUserId > 0) {
+        setMembers((prev) =>
+          prev.map((m) =>
+            Number(m.id) === targetUserId
+              ? { ...m, muted_until: nextMutedUntil }
+              : m,
+          ),
+        )
+      }
+      void loadRoomData({ preserveSelection: true })
+    })
+    s.on('room_state_refresh', (data: any) => {
+      if (Number(data?.room_id || 0) !== Number(roomId || 0)) return
+      void loadRoomData({ preserveSelection: true })
+    })
+    s.on('error', (data: any) => {
+      const message = String(data?.message || '')
+      if (message) setError(message)
+    })
     return () => {
       s.disconnect()
       setSocket(null)
     }
-  }, [channelId])
+  }, [channelId, roomId, session?.user?.id, session?.user?.username, currentChannelIdFromUrl, isMobile])
+
+  useEffect(() => {
+    if (!unreadMentionIds.size) return
+    const isFocused = typeof document !== 'undefined' ? document.hasFocus() : true
+    if (!isFocused) return
+    if (!isNearBottom(scrollRef.current, 80)) return
+    void markChannelAsRead()
+    clearUnreadMentions()
+  }, [messages.length, unreadMentionIds.size, channelId])
 
   useEffect(() => {
     lastChannelIdRef.current = channelId
   }, [channelId])
+
+  useEffect(() => {
+    if (!isMobile || !channelId) {
+      setMobileMembersOpen(false)
+    }
+  }, [isMobile, channelId])
 
   function formatTime(ts: string) {
     const d = new Date(ts)
@@ -473,7 +733,7 @@ export default function RoomPage() {
   }
 
   async function sendMessage() {
-    if (!socket || !roomId || !channelId) return
+    if (!socket || !roomId || !channelId || !canWriteInChannel) return
     const text = input.trim()
     if (!text) return
     socket.emit('send_message', {
@@ -490,7 +750,7 @@ export default function RoomPage() {
   }
 
   async function uploadAndSendFile(file: File) {
-    if (!socket || !roomId || !channelId) return
+    if (!socket || !roomId || !channelId || !canWriteInChannel) return
     const MAX_5GB = 5 * 1024 * 1024 * 1024
     if (file.size > MAX_5GB) {
       setError('Лимит файла — 5 GB')
@@ -529,12 +789,35 @@ export default function RoomPage() {
   }
 
   function renderMentions(content: string) {
+    const myName = String(session?.user?.username || '').toLowerCase()
     const parts = content.split(/(@[a-zA-Z0-9_-]+)/g)
     return parts.map((part, i) =>
       /^@[a-zA-Z0-9_-]+$/.test(part) ? (
-        <Box key={`${part}-${i}`} component="span" sx={{ color: 'secondary.main', fontWeight: 700 }}>
-          {part}
-        </Box>
+        (() => {
+          const uname = part.slice(1)
+          const unameLow = uname.toLowerCase()
+          const isMe = Boolean(myName && unameLow === myName)
+          const targetMember = members.find((m) => m.username.toLowerCase() === unameLow)
+          return (
+            <Box
+              key={`${part}-${i}`}
+              component="span"
+              sx={{
+                color: isMe ? 'error.main' : 'secondary.main',
+                fontWeight: 800,
+                cursor: targetMember ? 'pointer' : 'default',
+                textDecoration: targetMember ? 'underline' : 'none',
+              }}
+              onClick={(e) => {
+                if (!targetMember) return
+                setUserCardAnchor(e.currentTarget as HTMLElement)
+                setUserCardUserId(targetMember.id)
+              }}
+            >
+              {part}
+            </Box>
+          )
+        })()
       ) : (
         <span key={`${part}-${i}`}>{part}</span>
       ),
@@ -575,14 +858,25 @@ export default function RoomPage() {
   function renderMessageBody(m: MessageItem) {
     const type = m.message_type || 'text'
     const mediaMaxWidth = { xs: 'min(100%, calc(100vw - 112px))', sm: 'min(100%, 420px)', md: 420 }
+    const imageSx = {
+      width: 'auto',
+      maxWidth: mediaMaxWidth,
+      maxHeight: 560,
+      height: 'auto',
+      objectFit: 'contain',
+      borderRadius: 1,
+      display: 'block',
+      imageRendering: 'auto',
+      backfaceVisibility: 'hidden',
+    } as const
     if (type === 'image' && !m.file_url) {
       const maybeUrl = (m.content || '').trim()
       if (/^https?:\/\//.test(maybeUrl)) {
-        return <Box component="img" src={maybeUrl} alt="attachment" sx={{ width: '100%', maxWidth: mediaMaxWidth, borderRadius: 1, display: 'block' }} />
+        return <Box component="img" src={maybeUrl} alt="attachment" loading="lazy" draggable={false} sx={imageSx} />
       }
     }
     if ((type === 'image' || type === 'sticker') && m.file_url) {
-      return <Box component="img" src={m.file_url} alt="attachment" sx={{ width: '100%', maxWidth: mediaMaxWidth, borderRadius: 1, display: 'block' }} />
+      return <Box component="img" src={m.file_url} alt="attachment" loading="lazy" draggable={false} sx={imageSx} />
     }
     if (type === 'video' && m.file_url) {
       return (
@@ -715,12 +1009,97 @@ export default function RoomPage() {
               </Typography>
             </Box>
             {isRoomAdmin ? (
-              <Button size="small" startIcon={<Settings2 size={14} />} onClick={() => setSettingsOpen(true)} sx={{ display: { xs: 'none', md: 'inline-flex' } }}>
-                Server settings
-              </Button>
+              <Stack direction="row" spacing={0.5}>
+                {isMobile ? (
+                  <IconButton
+                    size="small"
+                    onClick={() => setMobileMembersOpen(true)}
+                    aria-label="Open members"
+                  >
+                    <Users size={18} />
+                  </IconButton>
+                ) : null}
+                <IconButton
+                  size="small"
+                  onClick={() => setSettingsOpen(true)}
+                  sx={{ display: { xs: 'inline-flex', md: 'none' } }}
+                  aria-label="Server settings"
+                >
+                  <Settings2 size={18} />
+                </IconButton>
+                <Button size="small" startIcon={<Settings2 size={14} />} onClick={() => setSettingsOpen(true)} sx={{ display: { xs: 'none', md: 'inline-flex' } }}>
+                  Server settings
+                </Button>
+              </Stack>
+            ) : null}
+            {!isRoomAdmin && isMobile ? (
+              <IconButton
+                size="small"
+                onClick={() => setMobileMembersOpen(true)}
+                aria-label="Open members"
+              >
+                <Users size={18} />
+              </IconButton>
             ) : null}
           </Stack>
 
+          {isMobile && mobileMembersOpen ? (
+            <Box sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', bgcolor: 'background.paper' }}>
+              <Stack
+                direction="row"
+                alignItems="center"
+                spacing={0.8}
+                sx={{ px: 1.2, height: 56, borderBottom: '1px solid', borderColor: 'divider' }}
+              >
+                <IconButton size="small" onClick={() => setMobileMembersOpen(false)} aria-label="Back to chat">
+                  <ArrowLeft size={18} />
+                </IconButton>
+                <Typography sx={{ fontWeight: 800 }}>Members</Typography>
+              </Stack>
+              <Box className="bc-scroll" sx={{ flex: 1, minHeight: 0, overflowY: 'auto', px: 1.1, py: 1 }}>
+                <List disablePadding>
+                  {members.map((m) => {
+                    const dot = m.presence_status === 'online' ? '#23a559' : m.presence_status === 'away' ? '#f0b232' : '#80848e'
+                    return (
+                      <ListItemButton
+                        key={`mobile-member-${m.id}`}
+                        sx={{ borderRadius: 2, mb: 0.25, py: 0.8 }}
+                        onClick={(e) => {
+                          setUserCardAnchor(e.currentTarget)
+                          setUserCardUserId(m.id)
+                        }}
+                      >
+                        <Box sx={{ position: 'relative', mr: 1 }}>
+                          <Avatar src={m.avatar_url ?? undefined} sx={{ width: 34, height: 34 }}>
+                            {m.username.slice(0, 2).toUpperCase()}
+                          </Avatar>
+                          <Box
+                            sx={{
+                              position: 'absolute',
+                              right: -1,
+                              bottom: -1,
+                              width: 10,
+                              height: 10,
+                              borderRadius: '50%',
+                              bgcolor: dot,
+                              border: '2px solid',
+                              borderColor: 'background.paper',
+                            }}
+                          />
+                        </Box>
+                        <ListItemText
+                          primary={m.username}
+                          primaryTypographyProps={{ sx: { fontWeight: 700 } }}
+                          secondary={displayRolesForMember(m)}
+                          secondaryTypographyProps={{ sx: { color: 'text.secondary' } }}
+                        />
+                      </ListItemButton>
+                    )
+                  })}
+                </List>
+              </Box>
+            </Box>
+          ) : (
           <Box sx={{ flex: 1, minHeight: 0, position: 'relative' }}>
             {!messages.length ? <Typography color="text.secondary" sx={{ px: 3, py: 2 }}>no messages yet</Typography> : null}
 
@@ -734,6 +1113,10 @@ export default function RoomPage() {
                 const el = e.currentTarget
                 const remaining = el.scrollHeight - el.scrollTop - el.clientHeight
                 setJumpToPresent(remaining > 220)
+                if (remaining < 80) {
+                  void markChannelAsRead()
+                  clearUnreadMentions()
+                }
 
                 if (prefetchingRef.current) return
                 if (!hasMore || loadingOlder) return
@@ -779,7 +1162,9 @@ export default function RoomPage() {
                       minWidth: 0,
                       borderRadius: 2,
                       transition: 'background-color .25s ease',
-                      bgcolor: highlightMsgId === m.id ? 'rgba(88,101,242,.22)' : 'transparent',
+                      bgcolor: highlightMsgId === m.id
+                        ? 'rgba(88,101,242,.22)'
+                        : (unreadMentionIds.has(Number(m.id)) ? 'rgba(244,67,54,.14)' : 'transparent'),
                     }}
                   >
                     <Stack direction="row" spacing={1.2} alignItems="flex-start" sx={{ py: 0.6, width: '100%', minWidth: 0 }}>
@@ -929,27 +1314,46 @@ export default function RoomPage() {
               </Box>
             ) : null}
           </Box>
+          )}
 
-        <ChatComposer
-          channelId={channelId}
-          input={input}
-          setInput={setInput}
-          placeholder={channelId ? `Message #${activeChannel?.name ?? ''}` : 'Select a channel'}
-          onSend={() => void sendMessage()}
-          sendingFile={sendingFile}
-          fileInputRef={fileInputRef}
-          onPickFile={(f) => {
-            void uploadAndSendFile(f)
-          }}
-          mentionCandidates={mentionCandidates as any}
-          applyMention={applyMention}
-          onTrackMention={trackMention}
-          replyTo={replyTo as any}
-          onClearReply={() => setReplyTo(null)}
-          onPickGif={(url) => {
-            void sendGif(url)
-          }}
-        />
+        {!mobileMembersOpen && canWriteInChannel ? (
+          <ChatComposer
+            channelId={channelId}
+            input={input}
+            setInput={setInput}
+            placeholder={channelId ? `Message #${activeChannel?.name ?? ''}` : 'Select a channel'}
+            onSend={() => void sendMessage()}
+            sendingFile={sendingFile}
+            fileInputRef={fileInputRef}
+            onPickFile={(f) => {
+              void uploadAndSendFile(f)
+            }}
+            mentionCandidates={mentionCandidates as any}
+            applyMention={applyMention}
+            onTrackMention={trackMention}
+            replyTo={replyTo as any}
+            onClearReply={() => setReplyTo(null)}
+            onPickGif={(url) => {
+              void sendGif(url)
+            }}
+          />
+        ) : !mobileMembersOpen ? (
+          <Box
+            sx={{
+              px: 2,
+              py: 1.2,
+              borderTop: '1px solid',
+              borderColor: 'divider',
+              bgcolor: 'background.paper',
+            }}
+          >
+            <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>
+              {isMutedInRoom
+                ? (mutedUntilLabel ? `You are muted in this room until ${mutedUntilLabel}.` : 'You are muted in this room.')
+                : 'You do not have permission to write in this channel.'}
+            </Typography>
+          </Box>
+        ) : null}
           </>
           ) : null}
 
@@ -1006,7 +1410,7 @@ export default function RoomPage() {
                     <ListItemText
                       primary={m.username}
                       primaryTypographyProps={{ sx: { fontWeight: 700 } }}
-                      secondary={m.role && m.role !== 'member' ? m.role : undefined}
+                      secondary={displayRolesForMember(m)}
                       secondaryTypographyProps={{ sx: { color: 'text.secondary' } }}
                     />
                   </ListItemButton>
@@ -1091,6 +1495,13 @@ export default function RoomPage() {
         anchorEl={userCardAnchor}
         userId={userCardUserId}
         members={members as any}
+        roomRoles={roles as any}
+        roomId={Number(roomId || 0)}
+        myRole={myMember?.role ?? 'member'}
+        currentUserId={session?.user?.id ?? null}
+        onActionDone={() => {
+          void loadRoomData()
+        }}
         onClose={() => {
           setUserCardAnchor(null)
           setUserCardUserId(null)

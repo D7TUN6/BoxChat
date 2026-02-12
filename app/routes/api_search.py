@@ -1,5 +1,5 @@
 from flask import request, jsonify
-from flask_login import login_required
+from flask_login import login_required, current_user
 
 from app.models import Room
 
@@ -14,7 +14,10 @@ def register_search_routes(api_bp):
     @login_required
     def search_servers():
         query = request.args.get('q', '', type=str).strip()
-        rooms_query = Room.query.filter(Room.type != 'dm')
+        rooms_query = Room.query.filter(
+            Room.type != 'dm',
+            (Room.is_public == True)
+        )
         if query:
             rooms_query = rooms_query.filter(Room.name.ilike(f'%{query}%'))
 

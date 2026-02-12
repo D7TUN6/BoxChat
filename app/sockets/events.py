@@ -3,12 +3,15 @@
 from flask_socketio import join_room, leave_room, emit
 from flask_login import current_user
 from app.extensions import db, socketio
-from app.models import Message, Member, Room, Channel, ReadMessage, User, Role, MemberRole
+from app.models import Message, Member, Room, Channel, ReadMessage, User, Role, MemberRole, RoomBan
 from app.functions import can_user_mention_role
-from datetime import datetime
+from datetime import datetime, timedelta
+import json
 import os
 import re
 from urllib.parse import urlparse
+from app.functions import get_user_role_ids, user_has_room_permission
+from sqlalchemy import func
 
 
 def _parse_mentions(content, room_id):
@@ -97,6 +100,42 @@ def _is_allowed_external_media_url(url):
         return any(host == h or host.endswith(f'.{h}') for h in allowed_hosts)
     except Exception:
         return False
+
+
+def _parse_duration_to_minutes(token: str):
+    raw = str(token or '').strip().lower()
+    if not raw:
+        return None
+    m = re.match(r'^(\d+)([mhd]?)$', raw)
+    if not m:
+        return None
+    value = int(m.group(1))
+    unit = m.group(2) or 'm'
+    if value <= 0:
+        return None
+    if unit == 'm':
+        return value
+    if unit == 'h':
+        return value * 60
+    if unit == 'd':
+        return value * 60 * 24
+    return None
+
+
+def _find_room_member_by_token(room_id: int, token: str):
+    username = str(token or '').strip()
+    if username.startswith('@'):
+        username = username[1:]
+    if not username:
+        return None
+    return Member.query.join(User, Member.user_id == User.id).filter(
+        Member.room_id == int(room_id),
+        func.lower(User.username) == username.lower(),
+    ).first()
+
+
+def _emit_command_result(ok: bool, message: str):
+    emit('command_result', {'ok': bool(ok), 'message': str(message or '')})
 
 @socketio.on('join')
 def on_join(data):
@@ -256,16 +295,191 @@ def handle_send_message(data):
         emit('error', {'message': 'Канал не найден'})
         return
 
-    member = Member.query.filter_by(user_id=current_user.id, room_id=room_id).first()
-    
-    if not member:
+    memberships = Member.query.filter_by(user_id=current_user.id, room_id=room_id).all()
+    member = memberships[0] if memberships else None
+
+    if not memberships:
         emit('error', {'message': 'Нет доступа'})
         return
+
+    # Active room ban check (supports temporary bans).
+    active_ban = RoomBan.query.filter_by(room_id=room_id, user_id=current_user.id).first()
+    if active_ban:
+        banned_until = getattr(active_ban, 'banned_until', None)
+        if banned_until and banned_until <= datetime.utcnow():
+            try:
+                db.session.delete(active_ban)
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+        else:
+            _emit_command_result(False, 'You are banned from this room.')
+            emit('error', {'message': 'Вы забанены в этой комнате'})
+            return
+
+    # Slash moderation commands:
+    # /mute @user 60m reason
+    # /unmute @user
+    # /kick @user reason
+    # /ban @user 2h reason  (duration currently informational for ban)
+    if message_type == 'text' and not file_url and isinstance(content, str) and content.startswith('/'):
+        parts = content.split()
+        cmd = (parts[0].lower() if parts else '')
+        if cmd in {'/mute', '/unmute', '/kick', '/ban'}:
+            def _can(permission_key: str) -> bool:
+                return bool(getattr(current_user, 'is_superuser', False) or user_has_room_permission(current_user.id, room_id, permission_key))
+
+            if cmd == '/mute':
+                if not _can('mute_members'):
+                    _emit_command_result(False, 'No permission to mute members.')
+                    return
+                if len(parts) < 3:
+                    _emit_command_result(False, 'Usage: /mute @username <duration[m|h|d]> [reason]')
+                    return
+                target = _find_room_member_by_token(room_id, parts[1])
+                minutes = _parse_duration_to_minutes(parts[2])
+                if not target:
+                    _emit_command_result(False, 'User not found in this room.')
+                    return
+                if minutes is None:
+                    _emit_command_result(False, 'Invalid duration. Example: 30m, 2h, 1d')
+                    return
+                if target.user_id == current_user.id:
+                    _emit_command_result(False, 'You cannot mute yourself.')
+                    return
+                if target.role == 'owner' and not getattr(current_user, 'is_superuser', False):
+                    _emit_command_result(False, 'Cannot mute room owner.')
+                    return
+                until = datetime.utcnow() + timedelta(minutes=minutes)
+                targets = Member.query.filter_by(user_id=target.user_id, room_id=room_id).all()
+                for t in targets:
+                    t.muted_until = until
+                db.session.commit()
+                socketio.emit('member_mute_updated', {
+                    'room_id': room_id,
+                    'user_id': target.user_id,
+                    'muted_until': until.strftime('%Y-%m-%dT%H:%M:%SZ'),
+                }, room=str(room_id))
+                _emit_command_result(True, f'{target.user.username} muted for {minutes}m.')
+                return
+
+            if cmd == '/unmute':
+                if not _can('mute_members'):
+                    _emit_command_result(False, 'No permission to unmute members.')
+                    return
+                if len(parts) < 2:
+                    _emit_command_result(False, 'Usage: /unmute @username')
+                    return
+                target = _find_room_member_by_token(room_id, parts[1])
+                if not target:
+                    _emit_command_result(False, 'User not found in this room.')
+                    return
+                targets = Member.query.filter_by(user_id=target.user_id, room_id=room_id).all()
+                for t in targets:
+                    t.muted_until = None
+                db.session.commit()
+                socketio.emit('member_mute_updated', {
+                    'room_id': room_id,
+                    'user_id': target.user_id,
+                    'muted_until': None,
+                }, room=str(room_id))
+                _emit_command_result(True, f'{target.user.username} unmuted.')
+                return
+
+            if cmd == '/kick':
+                if not _can('kick_members'):
+                    _emit_command_result(False, 'No permission to kick members.')
+                    return
+                if len(parts) < 2:
+                    _emit_command_result(False, 'Usage: /kick @username [reason]')
+                    return
+                target = _find_room_member_by_token(room_id, parts[1])
+                if not target:
+                    _emit_command_result(False, 'User not found in this room.')
+                    return
+                if target.user_id == current_user.id:
+                    _emit_command_result(False, 'You cannot kick yourself.')
+                    return
+                if target.role == 'owner' and not getattr(current_user, 'is_superuser', False):
+                    _emit_command_result(False, 'Cannot kick room owner.')
+                    return
+                targets = Member.query.filter_by(user_id=target.user_id, room_id=room_id).all()
+                for t in targets:
+                    db.session.delete(t)
+                db.session.commit()
+                socketio.emit('member_removed', {'user_id': target.user_id, 'room_id': room_id}, room=str(room_id))
+                socketio.emit('force_redirect', {'location': '/', 'reason': 'You were kicked from this room.'}, room=f"user_{target.user_id}")
+                _emit_command_result(True, f'{target.user.username} kicked.')
+                return
+
+            if cmd == '/ban':
+                if not _can('ban_members'):
+                    _emit_command_result(False, 'No permission to ban members.')
+                    return
+                if len(parts) < 2:
+                    _emit_command_result(False, 'Usage: /ban @username [duration] [reason]')
+                    return
+                target = _find_room_member_by_token(room_id, parts[1])
+                if not target:
+                    _emit_command_result(False, 'User not found in this room.')
+                    return
+                if target.user_id == current_user.id:
+                    _emit_command_result(False, 'You cannot ban yourself.')
+                    return
+                if target.role == 'owner' and not getattr(current_user, 'is_superuser', False):
+                    _emit_command_result(False, 'Cannot ban room owner.')
+                    return
+                duration_token = parts[2] if len(parts) >= 3 else ''
+                duration_minutes = _parse_duration_to_minutes(duration_token)
+                reason_start = 3 if duration_minutes is not None else 2
+                reason = ' '.join(parts[reason_start:]).strip() or 'Banned by moderator'
+                banned_until = datetime.utcnow() + timedelta(minutes=duration_minutes) if duration_minutes else None
+                existing_ban = RoomBan.query.filter_by(room_id=room_id, user_id=target.user_id).first()
+                if not existing_ban:
+                    db.session.add(RoomBan(
+                        room_id=room_id,
+                        user_id=target.user_id,
+                        banned_by_id=current_user.id,
+                        reason=reason,
+                        banned_until=banned_until,
+                        messages_deleted=False,
+                    ))
+                else:
+                    existing_ban.reason = reason
+                    existing_ban.banned_by_id = current_user.id
+                    existing_ban.banned_until = banned_until
+                targets = Member.query.filter_by(user_id=target.user_id, room_id=room_id).all()
+                for t in targets:
+                    db.session.delete(t)
+                db.session.commit()
+                socketio.emit('member_removed', {'user_id': target.user_id, 'room_id': room_id}, room=str(room_id))
+                socketio.emit('force_redirect', {'location': '/', 'reason': f'You were banned. Reason: {reason}'}, room=f"user_{target.user_id}")
+                if banned_until is not None:
+                    _emit_command_result(True, f'{target.user.username} banned until {banned_until.strftime("%Y-%m-%d %H:%M UTC")}.')
+                else:
+                    _emit_command_result(True, f'{target.user.username} banned.')
+                return
     
     can_post = True
-    if room.type == 'broadcast' and member.role not in ['owner', 'admin']:
+    roles = {str(getattr(m, 'role', 'member') or 'member') for m in memberships}
+    is_room_admin = bool('owner' in roles or 'admin' in roles)
+    if room.type == 'broadcast' and not is_room_admin:
         can_post = False
-    
+    now_utc = datetime.utcnow()
+    if any(getattr(m, 'muted_until', None) and m.muted_until > now_utc for m in memberships):
+        can_post = False
+
+    # Channel-level write restrictions: only selected roles can post.
+    try:
+        writer_role_ids = json.loads(channel.writer_role_ids_json or '[]') if getattr(channel, 'writer_role_ids_json', None) else []
+    except Exception:
+        writer_role_ids = []
+    if writer_role_ids:
+        user_roles = get_user_role_ids(current_user.id, room_id)
+        has_whitelisted_role = any(int(rid) in user_roles for rid in writer_role_ids)
+        if not has_whitelisted_role and not is_room_admin:
+            can_post = False
+
     if not can_post:
         emit('error', {'message': 'Только владельцы и администраторы могут публиковать'})
         return

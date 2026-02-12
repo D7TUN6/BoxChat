@@ -56,6 +56,12 @@ export default function ExplorePage() {
     void runSearch('')
   }, [])
 
+  useEffect(() => {
+    if (!friendMessage) return
+    const t = window.setTimeout(() => setFriendMessage(null), 4500)
+    return () => window.clearTimeout(t)
+  }, [friendMessage])
+
   async function sendFriendInvite() {
     const username = friendUsername.trim()
     if (!username || sendingInvite) return

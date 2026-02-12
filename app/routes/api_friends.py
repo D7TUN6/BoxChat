@@ -4,7 +4,7 @@ from flask import request, jsonify
 from flask_login import login_required, current_user
 from sqlalchemy import or_, and_, func
 
-from app.extensions import db
+from app.extensions import db, socketio
 from app.models import User, Room, Channel, Member
 
 
@@ -22,6 +22,36 @@ def _are_friends(a_id, b_id):
 
 
 def register_friends_routes(api_bp):
+    @api_bp.route('/api/v1/friends/status/<int:user_id>', methods=['GET'])
+    @login_required
+    def friend_status(user_id):
+        from app.models import FriendRequest
+
+        target = User.query.get_or_404(user_id)
+        if target.id == current_user.id:
+            return jsonify({'success': True, 'status': 'self'})
+
+        if _are_friends(current_user.id, target.id):
+            return jsonify({'success': True, 'status': 'friends'})
+
+        pending = FriendRequest.query.filter(
+            FriendRequest.status == 'pending',
+            or_(
+                and_(FriendRequest.from_user_id == current_user.id, FriendRequest.to_user_id == target.id),
+                and_(FriendRequest.from_user_id == target.id, FriendRequest.to_user_id == current_user.id),
+            )
+        ).order_by(FriendRequest.id.desc()).first()
+        if pending:
+            direction = 'incoming' if pending.to_user_id == current_user.id else 'outgoing'
+            return jsonify({
+                'success': True,
+                'status': 'pending',
+                'direction': direction,
+                'request_id': pending.id,
+            })
+
+        return jsonify({'success': True, 'status': 'none'})
+
     @api_bp.route('/api/v1/friends/request', methods=['POST'])
     @login_required
     def send_friend_request():
@@ -50,11 +80,24 @@ def register_friends_routes(api_bp):
             )
         ).first()
         if pending:
+            try:
+                print(f"[FRIEND REQUEST] Pending already exists between {current_user.id} and {target.id}")
+            except Exception:
+                pass
             return jsonify({'success': True, 'status': 'pending'}), 200
 
         fr = FriendRequest(from_user_id=current_user.id, to_user_id=target.id, status='pending')
         db.session.add(fr)
         db.session.commit()
+        try:
+            print(f"[FRIEND REQUEST] Emitting friend_request_received to user_{target.id} request_id={fr.id}")
+        except Exception:
+            pass
+        socketio.emit('friend_request_received', {
+            'request_id': fr.id,
+            'from_user_id': current_user.id,
+            'from_username': current_user.username,
+        }, room=f"user_{target.id}")
         return jsonify({'success': True, 'status': 'sent', 'request_id': fr.id})
 
     @api_bp.route('/api/v1/friends/requests', methods=['GET'])
@@ -89,6 +132,7 @@ def register_friends_routes(api_bp):
     @login_required
     def respond_friend_request(request_id):
         from app.models import FriendRequest, Friendship
+        from app.functions import ensure_default_roles, ensure_user_default_roles
 
         fr = FriendRequest.query.get_or_404(request_id)
         if fr.to_user_id != current_user.id:
@@ -106,6 +150,12 @@ def register_friends_routes(api_bp):
             fr.status = 'declined'
             fr.responded_at = now
             db.session.commit()
+            socketio.emit('friend_request_updated', {
+                'request_id': fr.id,
+                'status': 'declined',
+                'by_user_id': current_user.id,
+                'by_username': current_user.username,
+            }, room=f"user_{fr.from_user_id}")
             return jsonify({'success': True, 'status': 'declined'})
 
         low, high = _friendship_pair(fr.from_user_id, fr.to_user_id)
@@ -113,10 +163,44 @@ def register_friends_routes(api_bp):
         if not existing:
             db.session.add(Friendship(user_low_id=low, user_high_id=high))
 
+        # Auto-create DM on accept so it appears immediately in dashboard/sidebar.
+        existing_dm = Room.query.filter(
+            Room.type == 'dm',
+            Room.members.any(Member.user_id == fr.from_user_id),
+            Room.members.any(Member.user_id == fr.to_user_id)
+        ).first()
+        dm_room_id = None
+        if existing_dm:
+            dm_room_id = existing_dm.id
+        else:
+            from_user = User.query.get(fr.from_user_id)
+            to_user = User.query.get(fr.to_user_id)
+            dm = Room(
+                name=f"DM: {(from_user.username if from_user else fr.from_user_id)} - {(to_user.username if to_user else fr.to_user_id)}",
+                type='dm'
+            )
+            db.session.add(dm)
+            db.session.flush()
+            for uid in [fr.from_user_id, fr.to_user_id]:
+                db.session.add(Member(user_id=uid, room_id=dm.id, role='owner'))
+            db.session.add(Channel(room_id=dm.id, name='general', icon_emoji='💬'))
+            db.session.flush()
+            ensure_default_roles(dm.id)
+            ensure_user_default_roles(fr.from_user_id, dm.id)
+            ensure_user_default_roles(fr.to_user_id, dm.id)
+            dm_room_id = dm.id
+
         fr.status = 'accepted'
         fr.responded_at = now
         db.session.commit()
-        return jsonify({'success': True, 'status': 'accepted'})
+        socketio.emit('friend_request_updated', {
+            'request_id': fr.id,
+            'status': 'accepted',
+            'by_user_id': current_user.id,
+            'by_username': current_user.username,
+            'dm_room_id': dm_room_id,
+        }, room=f"user_{fr.from_user_id}")
+        return jsonify({'success': True, 'status': 'accepted', 'dm_room_id': dm_room_id})
 
     @api_bp.route('/api/v1/dm/<int:user_id>/create', methods=['POST'])
     @login_required
@@ -145,7 +229,7 @@ def register_friends_routes(api_bp):
             member = Member(user_id=uid, room_id=dm.id, role='owner')
             db.session.add(member)
 
-        channel = Channel(room_id=dm.id, name='general', emoji='💬')
+        channel = Channel(room_id=dm.id, name='general', icon_emoji='💬')
         db.session.add(channel)
         db.session.commit()
 

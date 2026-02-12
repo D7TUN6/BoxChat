@@ -8,7 +8,9 @@ class Room(db.Model):
     type = db.Column(db.String(20), nullable=False)  # 'dm', 'server', 'broadcast'
     is_public = db.Column(db.Boolean, default=False)
     owner_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    description = db.Column(db.String(500), nullable=True)
     avatar_url = db.Column(db.String(300), nullable=True)
+    banner_url = db.Column(db.String(300), nullable=True)
     invite_token = db.Column(db.String(100), nullable=True, unique=True)
     
     # For blogs: linked chat for comments (not implemented yet, but reserved for future use)
@@ -26,6 +28,7 @@ class Channel(db.Model):
     description = db.Column(db.String(500), nullable=True)
     icon_emoji = db.Column(db.String(10), nullable=True)
     icon_image_url = db.Column(db.String(300), nullable=True)
+    writer_role_ids_json = db.Column(db.Text, nullable=True)  # JSON array of role ids allowed to write
     
     # Relationships
     messages = db.relationship('Message', backref='channel', lazy=True, cascade='all, delete-orphan')
@@ -36,6 +39,7 @@ class Member(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     room_id = db.Column(db.Integer, db.ForeignKey('room.id', ondelete='CASCADE'), nullable=False)
     role = db.Column(db.String(20), default='member')  # 'owner', 'admin', 'member'
+    muted_until = db.Column(db.DateTime, nullable=True)
 
 
 class Role(db.Model):
@@ -46,6 +50,7 @@ class Role(db.Model):
     mention_tag = db.Column(db.String(60), nullable=False)  # normalized token used in @tag
     is_system = db.Column(db.Boolean, default=False)  # e.g. everyone/admin
     can_be_mentioned_by_everyone = db.Column(db.Boolean, default=False)
+    permissions_json = db.Column(db.Text, nullable=True)  # JSON array of permission keys
     created_at = db.Column(db.DateTime, nullable=False, default=db.func.now())
 
     room = db.relationship('Room', backref=db.backref('roles', lazy=True, cascade='all, delete-orphan'))
@@ -82,6 +87,7 @@ class RoomBan(db.Model):
     banned_by_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
     reason = db.Column(db.String(500), nullable=True)
     banned_at = db.Column(db.DateTime, nullable=False, default=db.func.now())
+    banned_until = db.Column(db.DateTime, nullable=True)
     messages_deleted = db.Column(db.Boolean, default=False)
     
     # Relationships
