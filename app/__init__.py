@@ -52,11 +52,17 @@ def create_app(config=None, init_db=True):
         flask_app.config['REMEMBER_COOKIE_SAMESITE'] = REMEMBER_COOKIE_SAMESITE
         flask_app.config['REMEMBER_COOKIE_SECURE'] = REMEMBER_COOKIE_SECURE
 
-    # Force project-root sqlite path so we always use BoxChat/thecomboxmsgr.db (not instance/)
+    # Normalize sqlite path:
+    # - relative sqlite path -> project root
+    # - absolute sqlite path -> keep as is
     db_uri = flask_app.config.get('SQLALCHEMY_DATABASE_URI', '')
     if isinstance(db_uri, str) and db_uri.startswith('sqlite:///') and not db_uri.startswith('sqlite:////'):
         sqlite_rel = db_uri.replace('sqlite:///', '', 1)
-        sqlite_abs = os.path.abspath(os.path.join(root_dir, sqlite_rel))
+        is_windows_abs = len(sqlite_rel) > 2 and sqlite_rel[1] == ':' and sqlite_rel[2] in ('\\', '/')
+        if os.path.isabs(sqlite_rel) or is_windows_abs:
+            sqlite_abs = os.path.abspath(sqlite_rel)
+        else:
+            sqlite_abs = os.path.abspath(os.path.join(root_dir, sqlite_rel))
         flask_app.config['SQLALCHEMY_DATABASE_URI'] = f"sqlite:///{sqlite_abs.replace('\\', '/')}"
 
     flask_app.config.setdefault('SESSION_COOKIE_HTTPONLY', True)
