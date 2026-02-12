@@ -45,6 +45,10 @@ pip install --upgrade pip
 pip install -r requirements.txt
 cd frontend && npm install && npm run build
 
+# Run migrations
+cd ..
+python tools/migration.py
+
 # Start the server
 python run.py
 ```
@@ -54,6 +58,7 @@ python run.py
 ```bash
 # Activate nix shell
 nix-shell
+python tools/migration.py
 
 # Start the server
 python run.py

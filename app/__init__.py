@@ -11,7 +11,7 @@ except Exception:
     load_dotenv = None
 
 
-def create_app(config=None):
+def create_app(config=None, init_db=True):
     # Create and configure Flask application
     # Get the root directory (where run.py is located)
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -104,9 +104,10 @@ def create_app(config=None):
     import app.sockets  # noqa
     
     # Create database tables and seed if needed
-    with flask_app.app_context():
-        _init_database(flask_app)
-        _setup_admin_user()
+    if init_db:
+        with flask_app.app_context():
+            _init_database(flask_app)
+            _setup_admin_user()
     
     # Set up login manager
     @login_manager.user_loader

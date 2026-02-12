@@ -3,7 +3,7 @@
 from app import create_app
 from app.extensions import socketio
 
-app = create_app()
+app = create_app(init_db=False)
 
 if __name__ == '__main__':
     print("[SERVER STARTUP] Starting BoxChat...")
