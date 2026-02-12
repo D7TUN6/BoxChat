@@ -16,6 +16,13 @@ def _dist_dir() -> str:
 
 def send_spa_index():
     dist_dir = _dist_dir()
+    index_path = os.path.join(dist_dir, 'index.html')
+    if not os.path.exists(index_path):
+        return (
+            "frontend build is missing: expected frontend/dist/index.html. "
+            "Run: cd frontend && npm install && npm run build",
+            500,
+        )
     return send_from_directory(dist_dir, 'index.html')
 
 

@@ -1,5 +1,6 @@
 # Entry point for the BoxChat application
 
+import os
 from app import create_app
 from app.extensions import socketio
 
@@ -8,6 +9,8 @@ app = create_app(init_db=False)
 if __name__ == '__main__':
     print("[SERVER STARTUP] Starting BoxChat...")
     print("[SERVER CONFIG] Socket.IO running on port 5000")
+    dist_dir = app.config.get('FRONTEND_DIST_DIR') or os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frontend', 'dist')
+    print(f"[SERVER CONFIG] Frontend dist dir: {dist_dir}")
     try:
         socketio.run(
             app,
