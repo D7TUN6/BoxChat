@@ -89,17 +89,3 @@ python tools/migration.py
 python run.py
 ```
 
-Production notes
-- Build frontend with `cd frontend && npm run build` and serve static assets from Flask or a reverse proxy.
-- Configure `UPLOAD_FOLDER`, `GIPHY_API_KEY` (optional for GIF search), and any session cookie settings in `config.py` or environment variables.
-
-Where to look in code
-- Frontend SPA: `frontend/src/` (views and `ui` components)
-- Backend routes: `app/routes/` (auth, api, friends, search)
-- Socket handlers: `app/sockets/events.py`
-- Models: `app/models/`
-
-If you'd like, I can:
-- run a deeper automatic scan to extract a full endpoint list and example payloads
-- add inline API examples to `docs/api.md`
-
