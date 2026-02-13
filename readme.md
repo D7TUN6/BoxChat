@@ -48,19 +48,58 @@ cd frontend && npm install && npm run build
 # Run migrations
 cd ..
 python tools/migration.py
+# BoxChat Messenger
 
-# Start the server
-python run.py
-```
+BoxChat is a self-hosted messenger with a modern SPA frontend (Vite + React + MUI) and a Flask + Socket.IO backend.
 
-### Setup with Nix
+Core features
+- User accounts: register, login, session management
+- Rooms & channels: multi-channel rooms, room settings, channel-level write permissions
+- Direct messages (DMs) and friend requests
+- Real-time messaging via Socket.IO with server-side validation
+- Message actions: edit, delete, forward, reactions, reply
+- Mentions and role-based mentions (including @everyone where allowed)
+- Media: file uploads, image/GIF sending (Giphy integration), audio/video playback
+- Presence, read receipts, notifications (per-user notification rooms)
+- Moderation: mute, kick, ban (temporary), admin actions
+- Roles & permissions per room, role management APIs
 
+Documentation
+- See the `docs/` folder for more detailed documentation: frontend, backend, API reference, sockets, setup and architecture.
+
+Quick start (development)
 ```bash
-# Activate nix shell
-nix-shell
+# Python environment
+python -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+
+# Frontend
+cd frontend
+npm install
+npm run dev      # runs Vite dev server
+
+# Back to repo root
+cd ..
+# Run DB migrations (project script)
 python tools/migration.py
 
-# Start the server
+# Start server
 python run.py
 ```
+
+Production notes
+- Build frontend with `cd frontend && npm run build` and serve static assets from Flask or a reverse proxy.
+- Configure `UPLOAD_FOLDER`, `GIPHY_API_KEY` (optional for GIF search), and any session cookie settings in `config.py` or environment variables.
+
+Where to look in code
+- Frontend SPA: `frontend/src/` (views and `ui` components)
+- Backend routes: `app/routes/` (auth, api, friends, search)
+- Socket handlers: `app/sockets/events.py`
+- Models: `app/models/`
+
+If you'd like, I can:
+- run a deeper automatic scan to extract a full endpoint list and example payloads
+- add inline API examples to `docs/api.md`
 
