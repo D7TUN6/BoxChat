@@ -37,9 +37,33 @@ export default function SettingsPage() {
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [file, setFile] = useState<File | null>(null)
+  const [avatarPreviewUrl, setAvatarPreviewUrl] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    if (!file) {
+      setAvatarPreviewUrl(null)
+      return
+    }
+    let url: string | null = null
+    try {
+      url = URL.createObjectURL(file)
+      setAvatarPreviewUrl(url)
+    } catch {
+      setAvatarPreviewUrl(null)
+    }
+    return () => {
+      if (url) {
+        try {
+          URL.revokeObjectURL(url)
+        } catch {
+          // ignore
+        }
+      }
+    }
+  }, [file])
 
   useEffect(() => {
     let active = true
@@ -224,7 +248,7 @@ export default function SettingsPage() {
 
       <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider', p: 2 }}>
         <Stack direction="row" spacing={2} alignItems="center" mb={2}>
-          <Avatar src={file ? URL.createObjectURL(file) : form.avatar_url} sx={{ width: 72, height: 72 }}>
+          <Avatar src={avatarPreviewUrl || form.avatar_url} sx={{ width: 72, height: 72 }}>
             {form.username.slice(0, 2).toUpperCase()}
           </Avatar>
           <Stack spacing={0.6}>

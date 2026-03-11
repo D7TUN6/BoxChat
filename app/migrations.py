@@ -156,4 +156,32 @@ def migrate(db_engine):
                     conn.execute(text('ALTER TABLE room_ban ADD COLUMN banned_until DATETIME'))
             set_version(conn, 8)
 
+        if current < 9:
+            # Performance indexes (safe to run multiple times).
+            try:
+                conn.execute(text('CREATE INDEX IF NOT EXISTS ix_member_room_user ON member (room_id, user_id)'))
+            except Exception:
+                pass
+            try:
+                conn.execute(text('CREATE INDEX IF NOT EXISTS ix_member_user_room ON member (user_id, room_id)'))
+            except Exception:
+                pass
+            try:
+                conn.execute(text('CREATE INDEX IF NOT EXISTS ix_message_channel_timestamp ON message (channel_id, timestamp)'))
+            except Exception:
+                pass
+            try:
+                conn.execute(text('CREATE INDEX IF NOT EXISTS ix_message_file_url ON message (file_url)'))
+            except Exception:
+                pass
+            try:
+                conn.execute(text('CREATE INDEX IF NOT EXISTS ix_member_role_room_user ON member_role (room_id, user_id)'))
+            except Exception:
+                pass
+            try:
+                conn.execute(text('CREATE INDEX IF NOT EXISTS ix_member_role_user_room ON member_role (user_id, room_id)'))
+            except Exception:
+                pass
+            set_version(conn, 9)
+
         conn.commit()

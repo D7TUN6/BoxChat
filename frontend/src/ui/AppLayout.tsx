@@ -74,8 +74,13 @@ type Room = {
 }
 
 type ChannelContext = {
+  kind: 'channel'
   channelId: number
   channelName: string
+  mouseX: number
+  mouseY: number
+} | {
+  kind: 'list'
   mouseX: number
   mouseY: number
 }
@@ -125,6 +130,10 @@ export default function AppLayout() {
   const [askedNotifPermission, setAskedNotifPermission] = useState(false)
   const [canManageChannels, setCanManageChannels] = useState(false)
   const [channelMenu, setChannelMenu] = useState<ChannelContext | null>(null)
+  const [channelDialog, setChannelDialog] = useState<{ mode: 'add' | 'rename' | 'delete'; channelId?: number; channelName?: string } | null>(null)
+  const [channelDialogName, setChannelDialogName] = useState('')
+  const [channelDialogBusy, setChannelDialogBusy] = useState(false)
+  const [channelDialogError, setChannelDialogError] = useState<string | null>(null)
   const [serverMenu, setServerMenu] = useState<ServerContext | null>(null)
   const [deleteTargetRoom, setDeleteTargetRoom] = useState<Room | null>(null)
   const [deleteConfirmChecked, setDeleteConfirmChecked] = useState(false)
@@ -330,6 +339,77 @@ export default function AppLayout() {
 
   const profileOpen = Boolean(profileAnchorEl)
 
+  async function submitChannelDialog() {
+    if (!activeRoom || !channelDialog || channelDialogBusy) return
+    setChannelDialogBusy(true)
+    setChannelDialogError(null)
+    try {
+      if (channelDialog.mode === 'add') {
+        const name = channelDialogName.trim()
+        if (!name) {
+          setChannelDialogError('Channel name is required.')
+          return
+        }
+        const body = new URLSearchParams()
+        body.set('name', name)
+        const res = await fetch(`/room/${activeRoom.id}/add_channel`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest' },
+          body: body.toString(),
+          redirect: 'follow',
+        }).catch(() => null)
+        if (!res?.ok) throw new Error(`Failed to add channel (HTTP ${res?.status || 0})`)
+        setChannelDialog(null)
+        await loadRooms()
+        return
+      }
+      if (channelDialog.mode === 'rename') {
+        const name = channelDialogName.trim()
+        const channelId = Number(channelDialog.channelId || 0)
+        if (!channelId) throw new Error('Missing channel.')
+        if (!name) {
+          setChannelDialogError('Channel name is required.')
+          return
+        }
+        const body = new URLSearchParams()
+        body.set('name', name)
+        const res = await fetch(`/room/${activeRoom.id}/channel/${channelId}/edit`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+          body: body.toString(),
+        }).catch(() => null)
+        if (!res?.ok) throw new Error(`Failed to rename channel (HTTP ${res?.status || 0})`)
+        setChannelDialog(null)
+        await loadRooms()
+        return
+      }
+      if (channelDialog.mode === 'delete') {
+        const channelId = Number(channelDialog.channelId || 0)
+        if (!channelId) throw new Error('Missing channel.')
+        const res = await fetch(`/room/${activeRoom.id}/channel/${channelId}/delete`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+        }).catch(() => null)
+        if (!res?.ok) throw new Error(`Failed to delete channel (HTTP ${res?.status || 0})`)
+        const nextChannelId = (activeRoom.channels ?? []).find((c) => Number(c.id) !== channelId)?.id ?? null
+        const isDeletingCurrent = Number(channelIdFromUrl ?? 0) === channelId
+        setChannelDialog(null)
+        await loadRooms()
+        if (isDeletingCurrent) {
+          navigate(`/room/${activeRoom.id}${nextChannelId ? `?channel_id=${nextChannelId}` : ''}`)
+        }
+        return
+      }
+    } catch (e: any) {
+      setChannelDialogError(e?.message ?? 'Request failed.')
+    } finally {
+      setChannelDialogBusy(false)
+    }
+  }
+
   return (
     <Box
       sx={{
@@ -516,7 +596,19 @@ export default function AppLayout() {
               </Typography>
             </Box>
 
-            <Box className="bc-scroll" sx={{ flex: 1, minHeight: 0, overflowY: 'auto', px: 1.1, py: 1.1 }}>
+            <Box
+              className="bc-scroll"
+              sx={{ flex: 1, minHeight: 0, overflowY: 'auto', px: 1.1, py: 1.1 }}
+              onContextMenu={(e) => {
+                if (!canManageChannels) return
+                e.preventDefault()
+                setChannelMenu({
+                  kind: 'list',
+                  mouseX: e.clientX + 2,
+                  mouseY: e.clientY - 6,
+                })
+              }}
+            >
               <Typography
                 variant="caption"
                 color="text.secondary"
@@ -534,7 +626,9 @@ export default function AppLayout() {
                     sx={{ borderRadius: 2, mb: 0.25 }}
                     onContextMenu={(e) => {
                       e.preventDefault()
+                      e.stopPropagation()
                       setChannelMenu({
+                        kind: 'channel',
                         channelId: ch.id,
                         channelName: ch.name,
                         mouseX: e.clientX + 2,
@@ -949,37 +1043,47 @@ export default function AppLayout() {
         anchorReference="anchorPosition"
         anchorPosition={channelMenu ? { top: channelMenu.mouseY, left: channelMenu.mouseX } : undefined}
       >
-        <MenuItem
-          onClick={() => {
-            const raw = localStorage.getItem('bc_muted_channels_v1')
-            const parsed = raw ? JSON.parse(raw) : []
-            const current = Array.isArray(parsed) ? parsed.map((x) => Number(x)) : []
-            const cid = Number(channelMenu?.channelId || 0)
-            const next = current.includes(cid) ? current.filter((x) => x !== cid) : [...current, cid]
-            localStorage.setItem('bc_muted_channels_v1', JSON.stringify(next))
-            setChannelMenu(null)
-          }}
-        >
-          <ListItemIcon><BellOff size={16} /></ListItemIcon>
-          <ListItemText>Mute channel</ListItemText>
-        </MenuItem>
+        {channelMenu?.kind === 'channel' ? (
+          <MenuItem
+            onClick={() => {
+              const raw = localStorage.getItem('bc_muted_channels_v1')
+              const parsed = raw ? JSON.parse(raw) : []
+              const current = Array.isArray(parsed) ? parsed.map((x) => Number(x)) : []
+              const cid = Number(channelMenu?.channelId || 0)
+              const next = current.includes(cid) ? current.filter((x) => x !== cid) : [...current, cid]
+              localStorage.setItem('bc_muted_channels_v1', JSON.stringify(next))
+              setChannelMenu(null)
+            }}
+          >
+            <ListItemIcon><BellOff size={16} /></ListItemIcon>
+            <ListItemText>Mute channel</ListItemText>
+          </MenuItem>
+        ) : null}
 
         {canManageChannels ? (
           <MenuItem
-            onClick={async () => {
-              if (!activeRoom || !channelMenu) return
-              const nextName = window.prompt('New channel name', channelMenu.channelName)?.trim()
-              if (!nextName) return
-              const body = new URLSearchParams()
-              body.set('name', nextName)
-              await fetch(`/room/${activeRoom.id}/channel/${channelMenu.channelId}/edit`, {
-                method: 'POST',
-                credentials: 'include',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: body.toString(),
-              }).catch(() => null)
+            onClick={() => {
               setChannelMenu(null)
-              window.location.reload()
+              setChannelDialogError(null)
+              setChannelDialogBusy(false)
+              setChannelDialogName('general')
+              setChannelDialog({ mode: 'add' })
+            }}
+          >
+            <ListItemIcon><CirclePlus size={16} /></ListItemIcon>
+            <ListItemText>Add channel</ListItemText>
+          </MenuItem>
+        ) : null}
+
+        {canManageChannels && channelMenu?.kind === 'channel' ? (
+          <MenuItem
+            onClick={() => {
+              if (channelMenu.kind !== 'channel') return
+              setChannelMenu(null)
+              setChannelDialogError(null)
+              setChannelDialogBusy(false)
+              setChannelDialogName(channelMenu.channelName)
+              setChannelDialog({ mode: 'rename', channelId: channelMenu.channelId, channelName: channelMenu.channelName })
             }}
           >
             <ListItemIcon><Pencil size={16} /></ListItemIcon>
@@ -987,18 +1091,15 @@ export default function AppLayout() {
           </MenuItem>
         ) : null}
 
-        {canManageChannels ? (
+        {canManageChannels && channelMenu?.kind === 'channel' ? (
           <MenuItem
-            onClick={async () => {
-              if (!activeRoom || !channelMenu) return
-              if (!window.confirm(`Delete channel "${channelMenu.channelName}"?`)) return
-              await fetch(`/room/${activeRoom.id}/channel/${channelMenu.channelId}/delete`, {
-                method: 'POST',
-                credentials: 'include',
-                headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
-              }).catch(() => null)
+            onClick={() => {
+              if (channelMenu.kind !== 'channel') return
               setChannelMenu(null)
-              window.location.reload()
+              setChannelDialogError(null)
+              setChannelDialogBusy(false)
+              setChannelDialogName(channelMenu.channelName)
+              setChannelDialog({ mode: 'delete', channelId: channelMenu.channelId, channelName: channelMenu.channelName })
             }}
           >
             <ListItemIcon><Trash2 size={16} /></ListItemIcon>
@@ -1006,6 +1107,63 @@ export default function AppLayout() {
           </MenuItem>
         ) : null}
       </Menu>
+
+      <Dialog
+        open={Boolean(channelDialog)}
+        onClose={() => {
+          if (channelDialogBusy) return
+          setChannelDialog(null)
+        }}
+        fullWidth
+        maxWidth="xs"
+      >
+        <DialogTitle>
+          {channelDialog?.mode === 'delete' ? 'Delete channel' : 'Channel name'}
+        </DialogTitle>
+        <DialogContent>
+          {channelDialog?.mode === 'delete' ? (
+            <Typography sx={{ mt: 1 }}>
+              Delete channel &quot;{channelDialog?.channelName ?? ''}&quot;?
+            </Typography>
+          ) : (
+            <TextField
+              autoFocus
+              margin="dense"
+              fullWidth
+              placeholder="general"
+              value={channelDialogName}
+              onChange={(e) => setChannelDialogName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  void submitChannelDialog()
+                }
+              }}
+            />
+          )}
+          {channelDialogError ? (
+            <Typography color="error" variant="body2" sx={{ mt: 1 }}>
+              {channelDialogError}
+            </Typography>
+          ) : null}
+        </DialogContent>
+        <DialogActions>
+          <Button
+            onClick={() => setChannelDialog(null)}
+            disabled={channelDialogBusy}
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={() => void submitChannelDialog()}
+            variant="contained"
+            color={channelDialog?.mode === 'delete' ? 'error' : 'primary'}
+            disabled={channelDialogBusy || (channelDialog?.mode !== 'delete' && !channelDialogName.trim())}
+          >
+            {channelDialog?.mode === 'delete' ? 'Delete' : 'OK'}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <Menu
         open={Boolean(serverMenu)}

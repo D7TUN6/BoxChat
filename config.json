@@ -4,7 +4,7 @@
   "SECRET_KEY": "super_secret_key_v2",
   "GIPHY_API_KEY": "key",
   "UPLOAD_FOLDER": "uploads",
-  "MAX_CONTENT_LENGTH": 429996729699999999999,
+  "MAX_CONTENT_LENGTH": 5368709120,
   "ALLOWED_EXTENSIONS": [
     "png", "jpg", "jpeg", "gif", "webp",
     "mp3", "ogg", "flac", "wav", "midi",

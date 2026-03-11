@@ -1,17 +1,32 @@
 # Socket.IO event handlers
 
-from flask_socketio import join_room, leave_room, emit
+from flask_socketio import join_room, emit
 from flask_login import current_user
 from app.extensions import db, socketio
-from app.models import Message, Member, Room, Channel, ReadMessage, User, Role, MemberRole, RoomBan
+from app.models import Message, Member, Room, Channel, User, Role, MemberRole, RoomBan
 from app.functions import can_user_mention_role
 from datetime import datetime, timedelta
 import json
 import os
 import re
+import sys
 from urllib.parse import urlparse
 from app.functions import get_user_role_ids, user_has_room_permission
 from sqlalchemy import func
+from sqlalchemy.orm import joinedload, subqueryload
+from app.utils.paths import safe_resolve_under
+
+
+DEBUG_SOCKETS = str(os.environ.get('BOXCHAT_DEBUG_SOCKETS', '') or '').strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+def _debug(msg: str):
+    if not DEBUG_SOCKETS:
+        return
+    try:
+        print(str(msg), file=sys.stderr)
+    except Exception:
+        pass
 
 
 def _parse_mentions(content, room_id):
@@ -28,11 +43,17 @@ def _parse_mentions(content, room_id):
             'denied_role_tags': [],
         }
 
-    members = Member.query.filter_by(room_id=room_id).all()
+    members = (
+        Member.query.filter_by(room_id=room_id)
+        .options(joinedload(Member.user))
+        .all()
+    )
     username_to_user = {}
+    id_to_username = {}
     for m in members:
-        if m.user:
+        if m.user and m.user.username:
             username_to_user[m.user.username.lower()] = m.user
+            id_to_username[m.user.id] = m.user.username
 
     room_roles = Role.query.filter_by(room_id=room_id).all()
     role_tag_to_role = {r.mention_tag.lower(): r for r in room_roles}
@@ -62,17 +83,18 @@ def _parse_mentions(content, room_id):
             denied_role_tags.append(role.mention_tag)
 
     role_user_ids = set()
-    for role in allowed_roles:
-        links = MemberRole.query.filter_by(room_id=room_id, role_id=role.id).all()
+    if allowed_roles:
+        allowed_role_ids = [int(r.id) for r in allowed_roles]
+        links = MemberRole.query.filter(
+            MemberRole.room_id == int(room_id),
+            MemberRole.role_id.in_(allowed_role_ids),
+        ).all()
         for link in links:
-            role_user_ids.add(link.user_id)
+            role_user_ids.add(int(link.user_id))
 
     all_mentioned_user_ids = set([u.id for u in mentioned_users]) | role_user_ids
-    all_mentioned_usernames = []
-    for uid in sorted(all_mentioned_user_ids):
-        user = User.query.get(uid)
-        if user:
-            all_mentioned_usernames.append(user.username)
+    all_mentioned_usernames = [id_to_username.get(uid) for uid in sorted(all_mentioned_user_ids)]
+    all_mentioned_usernames = [u for u in all_mentioned_usernames if u]
 
     mention_everyone = any(r.mention_tag.lower() == 'everyone' for r in allowed_roles)
     return {
@@ -145,34 +167,34 @@ def on_join(data):
     if channel_id:
         join_room(str(channel_id))
         if hasattr(current_user, 'id'):
-            print(f"[SOCKET JOIN] User {current_user.id} joined channel room: {channel_id}")
+            _debug(f"[SOCKET JOIN] User {current_user.id} joined channel room: {channel_id}")
     
     # Join personal notification room
     try:
         if hasattr(current_user, 'is_authenticated') and current_user.is_authenticated:
             room_name = f"user_{current_user.id}"
             join_room(room_name)
-            print(f"[SOCKET JOIN] User {current_user.id} joined notification room: {room_name}")
+            _debug(f"[SOCKET JOIN] User {current_user.id} joined notification room: {room_name}")
     except Exception as e:
-        print(f"[SOCKET JOIN ERROR] Failed to join notification room: {e}")
+        _debug(f"[SOCKET JOIN ERROR] Failed to join notification room: {e}")
         pass
 
 @socketio.on('connect')
 def on_connect():
     # Handle new socket connection: mark user online and notify rooms
-    print(f"[SOCKET CONNECT] Connection event received")
+    _debug("[SOCKET CONNECT] Connection event received")
     try:
         if hasattr(current_user, 'is_authenticated') and current_user.is_authenticated:
             user_id = current_user.id
             room_name = f"user_{user_id}"
-            print(f"[SOCKET CONNECT] User {user_id} ({current_user.username}) is authenticated")
+            _debug(f"[SOCKET CONNECT] User {user_id} ({current_user.username}) is authenticated")
             
             # Join user's personal notification room immediately
             try:
                 join_room(room_name)
-                print(f"[SOCKET CONNECT] ✓ User {user_id} joined notification room: {room_name}")
+                _debug(f"[SOCKET CONNECT] ✓ User {user_id} joined notification room: {room_name}")
             except Exception as e:
-                print(f"[SOCKET CONNECT] ✗ Failed to join notification room: {e}")
+                _debug(f"[SOCKET CONNECT] ✗ Failed to join notification room: {e}")
                 raise
             
             # Respect user's hide_status preference
@@ -182,11 +204,15 @@ def on_connect():
                 current_user.presence_status = 'online'
             current_user.last_seen = None
             db.session.commit()
-            print(f"[SOCKET CONNECT] ✓ User {user_id} status set to online")
+            _debug(f"[SOCKET CONNECT] ✓ User {user_id} status set to online")
             
             # Notify members in all channels of the rooms user is member of
-            memberships = Member.query.filter_by(user_id=user_id).all()
-            print(f"[SOCKET CONNECT] User {user_id} has {len(memberships)} memberships")
+            memberships = (
+                Member.query.filter_by(user_id=user_id)
+                .options(joinedload(Member.room).subqueryload(Room.channels))
+                .all()
+            )
+            _debug(f"[SOCKET CONNECT] User {user_id} has {len(memberships)} memberships")
             
             for m in memberships:
                 # For each channel in the room, emit presence update so clients viewing channel update status
@@ -198,13 +224,13 @@ def on_connect():
                             'status': current_user.presence_status
                         }, room=str(ch.id), skip_sid=None)  # Include sender in emission
                     except Exception as e:
-                        print(f"[SOCKET CONNECT] Error emitting presence for channel {ch.id}: {e}")
+                        _debug(f"[SOCKET CONNECT] Error emitting presence for channel {ch.id}: {e}")
             
-            print(f"[SOCKET CONNECT] ✓ User {user_id} fully connected")
+            _debug(f"[SOCKET CONNECT] ✓ User {user_id} fully connected")
         else:
-            print(f"[SOCKET CONNECT] No authenticated user found")
+            _debug("[SOCKET CONNECT] No authenticated user found")
     except Exception as e:
-        print(f"[SOCKET CONNECT] ✗ ERROR: {e}")
+        _debug(f"[SOCKET CONNECT] ✗ ERROR: {e}")
         import traceback
         traceback.print_exc()
         db.session.rollback()
@@ -218,7 +244,7 @@ def on_disconnect():
     try:
         if hasattr(current_user, 'is_authenticated') and current_user.is_authenticated:
             user_id = current_user.id
-            print(f"[SOCKET DISCONNECT] User {user_id} disconnecting...")
+            _debug(f"[SOCKET DISCONNECT] User {user_id} disconnecting...")
             # Respect hide_status: if hidden, keep hidden; otherwise set offline
             if getattr(current_user, 'hide_status', False):
                 current_user.presence_status = 'hidden'
@@ -226,8 +252,12 @@ def on_disconnect():
                 current_user.presence_status = 'offline'
             current_user.last_seen = datetime.utcnow()
             db.session.commit()
-            print(f"[SOCKET DISCONNECT] User {user_id} status set to offline, notifying rooms...")
-            memberships = Member.query.filter_by(user_id=user_id).all()
+            _debug(f"[SOCKET DISCONNECT] User {user_id} status set to offline, notifying rooms...")
+            memberships = (
+                Member.query.filter_by(user_id=user_id)
+                .options(joinedload(Member.room).subqueryload(Room.channels))
+                .all()
+            )
             for m in memberships:
                 for ch in m.room.channels:
                     socketio.emit('presence_updated', {
@@ -236,11 +266,11 @@ def on_disconnect():
                         'status': current_user.presence_status,
                         'last_seen_iso': current_user.last_seen.strftime('%Y-%m-%dT%H:%M:%SZ') if current_user.last_seen else None
                     }, room=str(ch.id), skip_sid=None)  # Include sender in emission
-            print(f"[SOCKET DISCONNECT] User {user_id} disconnect complete")
+            _debug(f"[SOCKET DISCONNECT] User {user_id} disconnect complete")
     except Exception as e:
-        print(f"[SOCKET DISCONNECT ERROR] {e}")
+        _debug(f"[SOCKET DISCONNECT ERROR] {e}")
         if user_id:
-            print(f"[SOCKET DISCONNECT ERROR] Error for user {user_id}")
+            _debug(f"[SOCKET DISCONNECT ERROR] Error for user {user_id}")
         db.session.rollback()
         pass
 
@@ -248,8 +278,7 @@ def on_disconnect():
 @socketio.on('send_message')
 def handle_send_message(data):
     # Handle incoming message
-    import sys
-    print(f"[handle_send_message] START - from user {current_user.id} ({current_user.username})", file=sys.stderr)
+    _debug(f"[handle_send_message] START - from user {current_user.id} ({current_user.username})")
     
     channel_id = data.get('channel_id')
     content = data.get('msg', '')
@@ -296,7 +325,6 @@ def handle_send_message(data):
         return
 
     memberships = Member.query.filter_by(user_id=current_user.id, room_id=room_id).all()
-    member = memberships[0] if memberships else None
 
     if not memberships:
         emit('error', {'message': 'Нет доступа'})
@@ -491,8 +519,8 @@ def handle_send_message(data):
         try:
             if file_url.startswith('/uploads/'):
                 base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-                abs_path = os.path.join(base_dir, file_url.lstrip('/'))
-                if not os.path.exists(abs_path):
+                abs_path = safe_resolve_under(base_dir, file_url.lstrip('/'))
+                if not abs_path or not abs_path.is_file():
                     file_url = None
             elif not _is_allowed_external_media_url(file_url):
                 file_url = None
@@ -507,9 +535,10 @@ def handle_send_message(data):
             pass
         try:
             base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            abs_path = os.path.join(base_dir, file_url.lstrip('/'))
+            abs_path = safe_resolve_under(base_dir, file_url.lstrip('/'))
             try:
-                file_size = os.path.getsize(abs_path)
+                if abs_path and abs_path.is_file():
+                    file_size = abs_path.stat().st_size
             except Exception:
                 pass
         except Exception:
@@ -554,7 +583,7 @@ def handle_send_message(data):
         reply_payload = (reply_to if reply_to else None)
 
     # Broadcast to channel (include server-built reply metadata)
-    print(f"[handle_send_message] Broadcasting receive_message to channel {channel_id}", file=sys.stderr)
+    _debug(f"[handle_send_message] Broadcasting receive_message to channel {channel_id}")
     emit('receive_message', {
         'id': msg.id,
         'user_id': current_user.id,
@@ -582,28 +611,16 @@ def handle_send_message(data):
     # Send per-user notifications and unread counts to members' personal rooms
     try:
         members = Member.query.filter_by(room_id=room_id).all()
-        print(f"[handle_send_message] Sending notifications to {len(members)} members", file=sys.stderr)
+        _debug(f"[handle_send_message] Sending notifications to {len(members)} members")
         for m in members:
             uid = m.user_id
             # skip sender
             if uid == current_user.id:
                 continue
 
-            # compute unread count for this user in this channel
-            # Count all messages after last_read_message_id, excluding the current user's own messages
-            unread_count = 0
-            rm = ReadMessage.query.filter_by(user_id=uid, channel_id=channel_id).first()
-            if rm and rm.last_read_message_id:
-                # Messages after what they've read
-                unread_count = Message.query.filter(
-                    Message.channel_id == channel_id,
-                    Message.id > rm.last_read_message_id
-                ).count()
-            else:
-                # No reading history, count all messages
-                unread_count = Message.query.filter(
-                    Message.channel_id == channel_id
-                ).count()
+            # NOTE: Server-side per-user unread counts are expensive (N users => N queries).
+            # Frontend tracks unread counts independently; keep field for compatibility.
+            unread_count = None
 
             # Build small snippet for notification
             snippet = (content or '')
@@ -627,7 +644,7 @@ def handle_send_message(data):
             }
 
             # Emit a generic notification event to the user's personal room
-            print(f"[handle_send_message] Sending notification to user {uid}: {payload}", file=sys.stderr)
+            _debug(f"[handle_send_message] Sending notification to user {uid}")
             socketio.emit('message_notification', payload, room=f"user_{uid}")
 
             # For DM rooms, keep the legacy dashboard handler name
@@ -640,4 +657,4 @@ def handle_send_message(data):
         db.session.rollback()
         pass
     
-    print(f"[handle_send_message] COMPLETE", file=sys.stderr)
+    _debug("[handle_send_message] COMPLETE")

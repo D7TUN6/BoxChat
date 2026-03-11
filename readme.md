@@ -26,7 +26,25 @@ v3.0 is the last python version! in the next version backend will be rewritten f
 
 ### Requirements
 
-- Python 3.8 or higher
+- Python 3.10 or higher
+
+## Environment variables
+
+- `BOXCHAT_SECRET_KEY`: overrides `SECRET_KEY` (don’t keep a default/weak key in `config.json`).
+- `BOXCHAT_ADMIN_PASSWORD`: creates a bootstrap `admin` user on first run (only if `admin` does not exist).
+- `BOXCHAT_SOCKETIO_CORS_ALLOWED_ORIGINS`: Socket.IO CORS (default is same-origin). Use `*` or a comma-separated list for dev.
+- `BOXCHAT_MAX_CONTENT_LENGTH`: max upload size in bytes (default: `5368709120` = 5 GiB).
+- `BOXCHAT_TRUST_PROXY_HEADERS`: if `1`, trusts `X-Forwarded-For`/`X-Real-IP` for IP-based bans/lockouts (only enable behind a trusted proxy).
+- `BOXCHAT_BANNED_IP_CACHE_TTL_SECONDS`: cache TTL for banned IP set (default: `30`).
+
+## FastAPI (async)
+
+FastAPI is mounted under `GET /api/async` when `fastapi` + `a2wsgi` are installed.
+
+- Docs: `GET /api/async/docs`
+- Health: `GET /api/async/health`
+- Session user: `GET /api/async/v1/whoami`
+- Stats (parallelized counts): `GET /api/async/v1/statistics`
 
 ### Setup with venv
 
@@ -48,44 +66,18 @@ cd frontend && npm install && npm run build
 # Run migrations
 cd ..
 python tools/migration.py
-# BoxChat Messenger
 
-BoxChat is a self-hosted messenger with a modern SPA frontend (Vite + React + MUI) and a Flask + Socket.IO backend.
-
-Core features
-- User accounts: register, login, session management
-- Rooms & channels: multi-channel rooms, room settings, channel-level write permissions
-- Direct messages (DMs) and friend requests
-- Real-time messaging via Socket.IO with server-side validation
-- Message actions: edit, delete, forward, reactions, reply
-- Mentions and role-based mentions (including @everyone where allowed)
-- Media: file uploads, image/GIF sending (Giphy integration), audio/video playback
-- Presence, read receipts, notifications (per-user notification rooms)
-- Moderation: mute, kick, ban (temporary), admin actions
-- Roles & permissions per room, role management APIs
-
-Documentation
-- See the `docs/` folder for more detailed documentation: frontend, backend, API reference, sockets, setup and architecture.
-
-Quick start (development)
-```bash
-# Python environment
-python -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip
-pip install -r requirements.txt
-
-# Frontend
-cd frontend
-npm install
-npm run dev      # runs Vite dev server
-
-# Back to repo root
-cd ..
-# Run DB migrations (project script)
-python tools/migration.py
-
-# Start server
+# Start the server
 python run.py
 ```
 
+### Setup with Nix
+
+```bash
+# Activate nix shell
+nix-shell
+python tools/migration.py
+
+# Start the server
+python run.py
+```

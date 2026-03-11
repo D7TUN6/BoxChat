@@ -4,24 +4,27 @@ import os
 import re
 import inspect
 import json
-from flask import Blueprint, request, jsonify, render_template, redirect, url_for, flash, send_from_directory, current_app
+from flask import Blueprint, request, jsonify, render_template, redirect, url_for, flash, send_from_directory, current_app, abort
 from flask_login import login_required, current_user
 from werkzeug.security import check_password_hash, generate_password_hash
 from datetime import datetime, timedelta
 from sqlalchemy import or_, and_, func
+from sqlalchemy.orm import joinedload, subqueryload
 from app.extensions import db, socketio
 from app.models import (
     User, Room, Channel, Member, Message, UserMusic,
     MessageReaction, ReadMessage, RoomBan, Role, MemberRole, RoleMentionPermission
 )
 from app.functions import (
-    save_uploaded_file, resize_image, is_image_file, is_music_file, is_video_file,
+    allowed_file, save_uploaded_file, resize_image, is_image_file, is_music_file, is_video_file,
     normalize_role_tag, ensure_default_roles, ensure_user_default_roles, can_user_mention_role,
     ROLE_PERMISSION_KEYS, parse_role_permissions, get_user_permissions, user_has_room_permission
 )
 from app.routes.spa import send_spa_index
 from app.routes.api_friends import register_friends_routes
 from app.routes.api_search import register_search_routes
+from app.utils.ip import get_client_ip as _get_client_ip
+from app.utils.paths import safe_resolve_under
 
 api_bp = Blueprint('api', __name__)
 
@@ -112,13 +115,6 @@ def get_role(user_id, room_id):
     return member.role if member else None
 
 
-def has_room_admin_access(user_id, room):
-    if not room:
-        return False
-    member = Member.query.filter_by(user_id=user_id, room_id=room.id).first()
-    return bool(member and member.role in ['owner', 'admin'])
-
-
 def has_room_permission(user_id, room, permission_key: str):
     if not room:
         return False
@@ -169,6 +165,10 @@ def get_upload_folder():
     return current_app.config.get('UPLOAD_FOLDER', 'uploads')
 
 
+def _safe_upload_abs_path(filename: str):
+    return safe_resolve_under(get_upload_folder(), filename)
+
+
 def _wants_json():
     if request.is_json:
         return True
@@ -179,7 +179,11 @@ def _wants_json():
 
 
 def _emit_presence_update_for_user(user):
-    memberships = Member.query.filter_by(user_id=user.id).all()
+    memberships = (
+        Member.query.filter_by(user_id=user.id)
+        .options(joinedload(Member.room).subqueryload(Room.channels))
+        .all()
+    )
     for m in memberships:
         for ch in m.room.channels:
             socketio.emit('presence_updated', {
@@ -378,13 +382,37 @@ def upload_user_avatar_api():
     file = request.files['avatar']
     if not file or not file.filename:
         return jsonify({'error': 'avatar file is required'}), 400
+    if not is_image_file(file.filename):
+        return jsonify({'error': 'unsupported avatar type'}), 415
 
+    old_avatar_url = getattr(current_user, 'avatar_url', None)
     filepath = save_file(file, 'avatars')
     if not filepath:
         return jsonify({'error': 'failed to save avatar'}), 500
 
+    # Normalize and resize stored avatar to reduce payload size.
+    try:
+        if str(filepath).startswith('/uploads/'):
+            rel = str(filepath).lstrip('/uploads/').lstrip('/')
+            abs_path = _safe_upload_abs_path(rel)
+            if abs_path:
+                resize_image(str(abs_path), (256, 256))
+    except Exception:
+        pass
+
     current_user.avatar_url = filepath
     db.session.commit()
+
+    # Best-effort cleanup of previous avatar file.
+    try:
+        if old_avatar_url and str(old_avatar_url).startswith('/uploads/') and old_avatar_url != filepath:
+            rel_old = str(old_avatar_url).lstrip('/uploads/').lstrip('/')
+            abs_old = _safe_upload_abs_path(rel_old)
+            if abs_old and abs_old.exists():
+                abs_old.unlink()
+    except Exception:
+        pass
+
     return jsonify({'success': True, 'avatar_url': current_user.avatar_url})
 
 @api_bp.route('/user/avatar/delete', methods=['POST'])
@@ -395,9 +423,9 @@ def delete_user_avatar():
         if current_user.avatar_url.startswith('/uploads/'):
             try:
                 filename = current_user.avatar_url.lstrip('/uploads/').lstrip('/')
-                abs_path = os.path.join(get_upload_folder(), filename)
-                if os.path.exists(abs_path):
-                    os.remove(abs_path)
+                abs_path = _safe_upload_abs_path(filename)
+                if abs_path and abs_path.exists():
+                    abs_path.unlink()
             except:
                 pass
         
@@ -411,7 +439,7 @@ def delete_user_avatar():
 @login_required
 def delete_user_account():
     # Delete user account and all associated data
-    data = request.json
+    data = request.get_json(silent=True) or {}
     password = data.get('password')
     
     if not password:
@@ -437,9 +465,9 @@ def delete_user_account():
         if current_user.avatar_url and current_user.avatar_url.startswith('/uploads/'):
             try:
                 filename = current_user.avatar_url.lstrip('/uploads/').lstrip('/')
-                abs_path = os.path.join(get_upload_folder(), filename)
-                if os.path.exists(abs_path):
-                    os.remove(abs_path)
+                abs_path = _safe_upload_abs_path(filename)
+                if abs_path and abs_path.exists():
+                    abs_path.unlink()
             except:
                 pass
         
@@ -528,9 +556,9 @@ def delete_room_avatar(room_id):
         if room.avatar_url.startswith('/uploads/'):
             try:
                 filename = room.avatar_url.lstrip('/uploads/').lstrip('/')
-                abs_path = os.path.join(get_upload_folder(), filename)
-                if os.path.exists(abs_path):
-                    os.remove(abs_path)
+                abs_path = _safe_upload_abs_path(filename)
+                if abs_path and abs_path.exists():
+                    abs_path.unlink()
             except:
                 pass
 
@@ -551,19 +579,24 @@ def upload_file():
     file = request.files['file']
     if not file or not file.filename:
         return jsonify({'error': 'file not selected'}), 400
+    if not allowed_file(file.filename):
+        return jsonify({'error': 'unsupported file type'}), 415
     # Save according to type with validation
-    if is_image_file(file.filename):
-        filepath = save_file(file, 'files')
-        filetype = 'image'
-    elif is_music_file(file.filename):
-        filepath = save_file(file, 'music')
-        filetype = 'music'
-    elif is_video_file(file.filename):
-        filepath = save_file(file, 'videos')
-        filetype = 'video'
-    else:
-        filepath = save_file(file, 'files')
-        filetype = 'file'
+    try:
+        if is_image_file(file.filename):
+            filepath = save_file(file, 'files')
+            filetype = 'image'
+        elif is_music_file(file.filename):
+            filepath = save_file(file, 'music')
+            filetype = 'music'
+        elif is_video_file(file.filename):
+            filepath = save_file(file, 'videos')
+            filetype = 'video'
+        else:
+            filepath = save_file(file, 'files')
+            filetype = 'file'
+    except Exception as e:
+        return jsonify({'error': f'upload error: {str(e)}'}), 500
 
     if not filepath:
         return jsonify({'error': 'error saving file'}), 500
@@ -577,9 +610,60 @@ def upload_file():
     return jsonify({'success': True, 'url': filepath, 'type': filetype, 'filename': filename})
 
 @api_bp.route('/uploads/<path:filename>')
+@login_required
 def uploaded_file(filename):
     # Serve uploaded file
-    return send_from_directory(get_upload_folder(), filename)
+    filename = str(filename or '').lstrip('/\\')
+    if not filename:
+        abort(404)
+
+    # Only allow configured upload subdirectories.
+    try:
+        from config import UPLOAD_SUBDIRS as _UPLOAD_SUBDIRS
+        allowed_subdirs = set((_UPLOAD_SUBDIRS or {}).values())
+    except Exception:
+        allowed_subdirs = {'avatars', 'room_avatars', 'channel_icons', 'files', 'music', 'videos'}
+    subdir = filename.split('/', 1)[0]
+    if subdir not in allowed_subdirs:
+        abort(404)
+
+    # Access control:
+    # - Avatars/icons/banners are visible to all authenticated users.
+    # - Room attachments (files/videos) require membership in the room where they were posted.
+    # - Music library files require ownership.
+    if subdir in {'files', 'videos', 'music'}:
+        full_url = f"/uploads/{filename}"
+        allowed = False
+        try:
+            msg = (
+                Message.query
+                .join(Channel, Message.channel_id == Channel.id)
+                .join(Room, Channel.room_id == Room.id)
+                .join(Member, and_(Member.room_id == Room.id, Member.user_id == current_user.id))
+                .filter(Message.file_url == full_url)
+                .first()
+            )
+            if msg:
+                allowed = True
+        except Exception:
+            allowed = False
+
+        if not allowed and subdir == 'music':
+            try:
+                allowed = UserMusic.query.filter_by(user_id=current_user.id, file_url=full_url).first() is not None
+            except Exception:
+                allowed = False
+
+        if not allowed:
+            abort(404)
+
+    inline = is_image_file(filename) or is_music_file(filename) or is_video_file(filename)
+    resp = send_from_directory(get_upload_folder(), filename, as_attachment=not inline)
+    try:
+        resp.headers.setdefault('X-Content-Type-Options', 'nosniff')
+    except Exception:
+        pass
+    return resp
 
 @api_bp.route('/music/add', methods=['POST'])
 @login_required
@@ -759,7 +843,8 @@ def edit_message(message_id):
     if message.user_id != current_user.id:
         return jsonify({'error': 'no access'}), 403
     
-    new_content = request.json.get('content', '')
+    data = request.get_json(silent=True) or {}
+    new_content = data.get('content', '')
     if new_content:
         message.content = new_content
         message.edited_at = datetime.utcnow()
@@ -793,7 +878,8 @@ def edit_message(message_id):
 def forward_message(message_id):
     # Forward message
     message = Message.query.get_or_404(message_id)
-    target_channel_id = request.json.get('channel_id')
+    data = request.get_json(silent=True) or {}
+    target_channel_id = data.get('channel_id')
     
     if not target_channel_id:
         return jsonify({'error': 'channel not specified'}), 400
@@ -840,8 +926,9 @@ def forward_message(message_id):
 def toggle_reaction(message_id):
     # Add or remove reaction to message
     message = Message.query.get_or_404(message_id)
-    emoji = request.json.get('emoji')
-    reaction_type = request.json.get('reaction_type', 'emoji')
+    data = request.get_json(silent=True) or {}
+    emoji = data.get('emoji')
+    reaction_type = data.get('reaction_type', 'emoji')
     
     if not emoji:
         return jsonify({'error': 'reaction not specified'}), 400
@@ -1001,21 +1088,24 @@ def join_room_by_invite(token):
 @login_required
 def get_accessible_channels():
     # Get list of accessible channels for forwarding
-    rooms = db.session.query(Room).join(Member).filter(
-        Member.user_id == current_user.id
-    ).all()
-    
-    channels_list = []
-    for room in rooms:
-        for channel in room.channels:
-            channels_list.append({
-                'id': channel.id,
-                'name': channel.name,
-                'room_id': room.id,
-                'room_name': room.name,
-                'room_type': room.type
-            })
-    
+    rows = (
+        db.session.query(Channel.id, Channel.name, Room.id, Room.name, Room.type)
+        .join(Room, Channel.room_id == Room.id)
+        .join(Member, Member.room_id == Room.id)
+        .filter(Member.user_id == current_user.id)
+        .order_by(Room.id.asc(), Channel.id.asc())
+        .all()
+    )
+    channels_list = [
+        {
+            'id': int(ch_id),
+            'name': ch_name,
+            'room_id': int(room_id),
+            'room_name': room_name,
+            'room_type': room_type,
+        }
+        for ch_id, ch_name, room_id, room_name, room_type in rows
+    ]
     return jsonify({'channels': channels_list})
 
 # --- (future) DESKTOP CLIENT API ENDPOINTS ---
@@ -1038,36 +1128,79 @@ def get_current_user():
 @login_required
 def get_user_rooms():
     # Get all rooms the user is member of - for desktop clients
+    rooms = (
+        Room.query.join(Member)
+        .filter(Member.user_id == current_user.id)
+        .options(
+            subqueryload(Room.channels),
+            subqueryload(Room.members).joinedload(Member.user),
+        )
+        .all()
+    )
+
+    room_ids = [int(r.id) for r in rooms]
+    room_to_my_member = {}
+    for r in rooms:
+        my_member = next((m for m in (r.members or []) if int(m.user_id) == int(current_user.id)), None)
+        room_to_my_member[int(r.id)] = my_member
+
+    # Preload role links for the current user across all rooms to avoid N+1.
+    room_to_role_ids: dict[int, set[int]] = {}
+    all_role_ids: set[int] = set()
+    if room_ids:
+        for link in MemberRole.query.filter(
+            MemberRole.user_id == int(current_user.id),
+            MemberRole.room_id.in_(room_ids),
+        ).all():
+            rid = int(getattr(link, 'role_id', 0) or 0)
+            rm = int(getattr(link, 'room_id', 0) or 0)
+            if rid and rm:
+                room_to_role_ids.setdefault(rm, set()).add(rid)
+                all_role_ids.add(rid)
+
+    role_by_id = {}
+    if all_role_ids:
+        role_by_id = {int(r.id): r for r in Role.query.filter(Role.id.in_(sorted(all_role_ids))).all()}
+
     rooms_data = []
-    rooms = Room.query.join(Member).filter(Member.user_id == current_user.id).all()
-    
     for room in rooms:
-        my_member = Member.query.filter_by(user_id=current_user.id, room_id=room.id).first()
-        perms = get_user_permissions(current_user.id, room.id)
+        room_id = int(room.id)
+        my_member = room_to_my_member.get(room_id)
+
+        # Compute permissions without extra DB roundtrips.
+        if my_member and str(getattr(my_member, 'role', 'member') or 'member') in {'owner', 'admin'}:
+            perms = set(ROLE_PERMISSION_KEYS)
+        else:
+            perms = set()
+            for rid in room_to_role_ids.get(room_id, set()):
+                role = role_by_id.get(int(rid))
+                if role and int(getattr(role, 'room_id', 0) or 0) == room_id:
+                    perms |= parse_role_permissions(role)
+
         room_name = room.name
         if room.type == 'dm':
             try:
-                other_member = next((m for m in room.members if int(m.user_id) != int(current_user.id)), None)
+                other_member = next((m for m in (room.members or []) if int(m.user_id) != int(current_user.id)), None)
                 if other_member and other_member.user and other_member.user.username:
                     room_name = other_member.user.username
             except Exception:
                 room_name = room.name
 
         room_dict = {
-            'id': room.id,
+            'id': room_id,
             'name': room_name,
             'type': room.type,
-            'my_role': my_member.role if my_member else 'member',
+            'my_role': getattr(my_member, 'role', None) if my_member else 'member',
             'my_permissions': sorted(list(perms)),
             'is_public': bool(room.is_public),
             'description': getattr(room, 'description', None) or '',
             'avatar_url': room.avatar_url,
             'banner_url': getattr(room, 'banner_url', None),
-            'member_count': len(room.members),
+            'member_count': len(room.members or []),
             'channels': []
         }
-        
-        for channel in room.channels:
+
+        for channel in (room.channels or []):
             channel_dict = {
                 'id': channel.id,
                 'name': channel.name,
@@ -1077,9 +1210,9 @@ def get_user_rooms():
                 'writer_role_ids': json.loads(channel.writer_role_ids_json or '[]') if getattr(channel, 'writer_role_ids_json', None) else [],
             }
             room_dict['channels'].append(channel_dict)
-        
+
         rooms_data.append(room_dict)
-    
+
     return jsonify({'rooms': rooms_data})
 
 
@@ -1092,7 +1225,7 @@ def get_room_members(room_id):
     if not membership:
         return jsonify({'error': 'Access denied'}), 403
 
-    members = Member.query.filter_by(room_id=room_id).all()
+    members = Member.query.filter_by(room_id=room_id).options(joinedload(Member.user)).all()
     role_links = MemberRole.query.filter_by(room_id=room_id).all()
     role_map = {}
     for link in role_links:
@@ -1237,12 +1370,16 @@ def get_room_roles(room_id):
     db.session.commit()
 
     roles = Role.query.filter_by(room_id=room_id).all()
+    mention_perms = RoleMentionPermission.query.filter_by(room_id=room_id).all()
+    allowed_sources_by_target = {}
+    for p in mention_perms:
+        try:
+            allowed_sources_by_target.setdefault(int(p.target_role_id), []).append(int(p.source_role_id))
+        except Exception:
+            continue
     data = []
     for role in roles:
-        allowed_source_roles = [
-            p.source_role_id
-            for p in RoleMentionPermission.query.filter_by(room_id=room_id, target_role_id=role.id).all()
-        ]
+        allowed_source_roles = allowed_sources_by_target.get(int(role.id), [])
         data.append({
             'id': role.id,
             'name': role.name,
@@ -1449,13 +1586,30 @@ def get_channel_messages(channel_id):
     member = Member.query.filter_by(user_id=current_user.id, room_id=room.id).first()
     if not member:
         return jsonify({'error': 'Access denied'}), 403
+
+    rm = ReadMessage.query.filter_by(user_id=current_user.id, channel_id=channel_id).first()
+    last_read_message_id = rm.last_read_message_id if rm else None
     
     limit = request.args.get('limit', 50, type=int)
     offset = request.args.get('offset', 0, type=int)
+    if limit < 1:
+        limit = 1
+    if limit > 200:
+        limit = 200
+    if offset < 0:
+        offset = 0
     
-    messages = Message.query.filter_by(channel_id=channel_id).order_by(
-        Message.timestamp.desc()
-    ).limit(limit).offset(offset).all()
+    messages = (
+        Message.query.filter_by(channel_id=channel_id)
+        .options(
+            joinedload(Message.user),
+            subqueryload(Message.reactions).joinedload(MessageReaction.user),
+        )
+        .order_by(Message.timestamp.desc())
+        .limit(limit)
+        .offset(offset)
+        .all()
+    )
     
     messages_data = []
     for msg in reversed(messages):
@@ -1482,7 +1636,7 @@ def get_channel_messages(channel_id):
         }
         messages_data.append(msg_dict)
     
-    return jsonify({'messages': messages_data, 'count': len(messages_data)})
+    return jsonify({'messages': messages_data, 'count': len(messages_data), 'last_read_message_id': last_read_message_id})
 
 @api_bp.route('/api/v1/user/<int:user_id>/profile', methods=['GET'])
 @login_required
@@ -1545,10 +1699,7 @@ def get_statistics():
 # --- ADMIN FUNCTIONS ---
 
 def get_client_ip():
-    # Safely get client IP address
-    if request.headers.get('X-Forwarded-For'):
-        return request.headers.get('X-Forwarded-For').split(',')[0].strip()
-    return request.remote_addr
+    return _get_client_ip(request) or ''
 
 @api_bp.route('/admin/user/<int:user_id>/ban', methods=['POST'])
 @login_required
@@ -1559,7 +1710,7 @@ def ban_user(user_id):
     if user.is_superuser:
         return jsonify({'error': 'its impossible to ban an admin'}), 403
     
-    data = request.json or {}
+    data = request.get_json(silent=True) or {}
     ban_reason = data.get('reason', 'tos violation')
     ban_ip = data.get('ban_ip', True)
     duration_raw = data.get('duration') or data.get('ban_duration') or data.get('ban_for')
@@ -1672,13 +1823,15 @@ def ban_user(user_id):
 
     # Add IP to banned list if requested
     if ban_ip:
-        user_ip = get_client_ip()
+        user_ip = str(getattr(user, 'last_login_ip', '') or '').strip()
+        if not user_ip:
+            user_ip = None
         if user.banned_ips:
             ips = [ip.strip() for ip in user.banned_ips.split(',') if ip.strip()]
         else:
             ips = []
 
-        if user_ip not in ips:
+        if user_ip and user_ip not in ips:
             ips.append(user_ip)
             user.banned_ips = ','.join(ips)
 
@@ -1742,9 +1895,6 @@ def ban_user(user_id):
         print(f"[GLOBAL BAN] All events emitted for user {user_id}")
     except Exception as e:
         print(f"[GLOBAL BAN] ERROR: {e}")
-    except Exception as e:
-        print(f"[GLOBAL BAN DEBUG] ERROR in emit block: {e}")
-        pass
 
     return jsonify({
         'success': True,
@@ -1757,7 +1907,7 @@ def ban_user(user_id):
 @login_required
 def unban_user(user_id):
     # Unban user by admin
-    data = request.json or {}
+    data = request.get_json(silent=True) or {}
     room_id = data.get('room_id')
     try:
         room_id = int(room_id) if room_id is not None and room_id != '' else None
@@ -1825,7 +1975,7 @@ def admin_change_password(user_id):
         return jsonify({'error': 'not enough rights'}), 403
     
     user = User.query.get_or_404(user_id)
-    data = request.json
+    data = request.get_json(silent=True) or {}
     new_password = data.get('password')
     
     from app.routes.auth import validate_password
@@ -1846,7 +1996,7 @@ def admin_change_password(user_id):
 @login_required
 def change_password():
     # User changes their own password
-    data = request.json
+    data = request.get_json(silent=True) or {}
     old_password = data.get('old_password')
     new_password = data.get('new_password')
     confirm_password = data.get('confirm_password')
@@ -2035,7 +2185,7 @@ def unmute_user_in_room(user_id, room_id):
 @login_required
 def promote_user(user_id):
     # Promote a user to admin within a room. Expects JSON with room_id
-    data = request.json or {}
+    data = request.get_json(silent=True) or {}
     room_id = data.get('room_id')
     try:
         room_id = int(room_id) if room_id is not None and room_id != '' else None
@@ -2082,7 +2232,7 @@ def promote_user(user_id):
 @login_required
 def demote_user(user_id):
     # Demote an admin back to member within a room. Expects JSON with room_id
-    data = request.json or {}
+    data = request.get_json(silent=True) or {}
     room_id = data.get('room_id')
     try:
         room_id = int(room_id) if room_id is not None and room_id != '' else None
@@ -2134,7 +2284,7 @@ def demote_user(user_id):
 def delete_user_messages(user_id):
     # Delete all messages from a user in a specific room (owner/admin allowed). Expects JSON {room_id}
     # Emits a `bulk_messages_deleted` socket event for the room with user_id
-    data = request.json or {}
+    data = request.get_json(silent=True) or {}
     room_id = data.get('room_id')
     try:
         room_id = int(room_id) if room_id is not None and room_id != '' else None

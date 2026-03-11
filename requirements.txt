@@ -9,3 +9,6 @@ python-socketio
 python-engineio
 python-dotenv
 giphy-client
+fastapi
+a2wsgi
+uvicorn

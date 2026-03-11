@@ -1,5 +1,6 @@
 import { Alert, Avatar, Box, Button, Paper, Popover, Stack, Typography } from '@mui/material'
 import { useEffect, useMemo, useState } from 'react'
+import ImagePreviewDialog from './ImagePreviewDialog'
 
 type RoleLike = {
   id: number
@@ -74,11 +75,13 @@ export default function UserCardPopover({
   const [friendActionText, setFriendActionText] = useState<string | null>(null)
   const [friendshipKnown, setFriendshipKnown] = useState<'unknown' | 'friends' | 'pending' | 'none'>('unknown')
   const [friendSending, setFriendSending] = useState(false)
+  const [avatarPreviewOpen, setAvatarPreviewOpen] = useState(false)
 
   useEffect(() => {
     setFriendActionText(null)
     setFriendshipKnown('unknown')
     setFriendSending(false)
+    setAvatarPreviewOpen(false)
   }, [userId])
 
   useEffect(() => {
@@ -197,7 +200,10 @@ export default function UserCardPopover({
     <Popover
       open={Boolean(anchorEl && userId)}
       anchorEl={anchorEl}
-      onClose={onClose}
+      onClose={() => {
+        setAvatarPreviewOpen(false)
+        onClose()
+      }}
       anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
       transformOrigin={{ vertical: 'top', horizontal: 'left' }}
       PaperProps={{ sx: { borderRadius: 3, width: 320, overflow: 'hidden' } }}
@@ -207,7 +213,17 @@ export default function UserCardPopover({
         <Box sx={{ display: 'flex', alignItems: 'flex-end', gap: 1.2, mt: -3 }}>
           <Avatar
             src={user?.avatar_url ?? undefined}
-            sx={{ width: 56, height: 56, border: '4px solid', borderColor: 'background.paper' }}
+            onClick={() => {
+              if (!user?.avatar_url) return
+              setAvatarPreviewOpen(true)
+            }}
+            sx={{
+              width: 56,
+              height: 56,
+              border: '4px solid',
+              borderColor: 'background.paper',
+              cursor: user?.avatar_url ? 'pointer' : 'default',
+            }}
           >
             {(user?.username || '?').slice(0, 2).toUpperCase()}
           </Avatar>
@@ -296,6 +312,13 @@ export default function UserCardPopover({
         ) : null}
         {!user ? <Alert severity="info" sx={{ mt: 1.2 }}>User not found</Alert> : null}
       </Box>
+
+      <ImagePreviewDialog
+        open={avatarPreviewOpen}
+        src={user?.avatar_url ?? null}
+        title={user?.username ? `${user.username} avatar` : 'Avatar'}
+        onClose={() => setAvatarPreviewOpen(false)}
+      />
     </Popover>
   )
 }

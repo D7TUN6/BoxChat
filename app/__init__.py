@@ -4,6 +4,7 @@ from flask import Flask
 from config import UPLOAD_FOLDER, UPLOAD_SUBDIRS
 import os
 from app.extensions import db, socketio, login_manager
+import secrets
 
 try:
     from dotenv import load_dotenv
@@ -36,6 +37,58 @@ def create_app(config=None, init_db=True):
             SESSION_COOKIE_NAME, SESSION_COOKIE_HTTPONLY, SESSION_COOKIE_SAMESITE, SESSION_COOKIE_SECURE,
             REMEMBER_COOKIE_NAME, REMEMBER_COOKIE_HTTPONLY, REMEMBER_COOKIE_SAMESITE, REMEMBER_COOKIE_SECURE
         )
+        def _looks_like_weak_secret(value: str) -> bool:
+            s = str(value or '')
+            return s in {'super_secret_key_v2', 'super_secret_key'} or len(s) < 32
+
+        def _load_or_create_persistent_secret(root: str, fallback: str) -> str:
+            # Prefer env secrets; otherwise load a persisted secret from instance/secret_key.
+            instance_dir = os.path.join(root, 'instance')
+            key_path = os.path.join(instance_dir, 'secret_key')
+            try:
+                if os.path.exists(key_path):
+                    with open(key_path, 'r', encoding='utf-8') as f:
+                        persisted = (f.read() or '').strip()
+                    if persisted and not _looks_like_weak_secret(persisted):
+                        return persisted
+            except Exception:
+                pass
+
+            if not fallback or _looks_like_weak_secret(fallback):
+                try:
+                    os.makedirs(instance_dir, exist_ok=True)
+                    new_secret = secrets.token_urlsafe(48)
+                    with open(key_path, 'w', encoding='utf-8') as f:
+                        f.write(new_secret)
+                    try:
+                        os.chmod(key_path, 0o600)
+                    except Exception:
+                        pass
+                    print('[SECURITY] Generated a new SECRET_KEY at instance/secret_key (set BOXCHAT_SECRET_KEY to override).')
+                    return new_secret
+                except Exception:
+                    pass
+
+            return fallback
+
+        # Environment overrides (prefer secrets outside the repo).
+        SECRET_KEY = os.environ.get('BOXCHAT_SECRET_KEY') or os.environ.get('SECRET_KEY') or SECRET_KEY
+        SECRET_KEY = _load_or_create_persistent_secret(root_dir, SECRET_KEY)
+        SQLALCHEMY_DATABASE_URI = (
+            os.environ.get('BOXCHAT_DATABASE_URI')
+            or os.environ.get('SQLALCHEMY_DATABASE_URI')
+            or SQLALCHEMY_DATABASE_URI
+        )
+        # Upload size cap:
+        # - default comes from config.py/config.json (5 GiB)
+        # - allow overriding only via BOXCHAT_MAX_CONTENT_LENGTH to avoid unexpected env collisions.
+        try:
+            raw_max = os.environ.get('BOXCHAT_MAX_CONTENT_LENGTH')
+            if raw_max is not None and str(raw_max).strip() != '':
+                MAX_CONTENT_LENGTH = int(raw_max)
+        except Exception:
+            pass
+
         flask_app.config['SECRET_KEY'] = SECRET_KEY
         flask_app.config['SQLALCHEMY_DATABASE_URI'] = SQLALCHEMY_DATABASE_URI
         flask_app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = SQLALCHEMY_TRACK_MODIFICATIONS
@@ -51,6 +104,13 @@ def create_app(config=None, init_db=True):
         flask_app.config['REMEMBER_COOKIE_HTTPONLY'] = REMEMBER_COOKIE_HTTPONLY
         flask_app.config['REMEMBER_COOKIE_SAMESITE'] = REMEMBER_COOKIE_SAMESITE
         flask_app.config['REMEMBER_COOKIE_SECURE'] = REMEMBER_COOKIE_SECURE
+
+        # Warn on insecure defaults.
+        try:
+            if str(SECRET_KEY or '') in {'super_secret_key_v2', 'super_secret_key'} or len(str(SECRET_KEY or '')) < 32:
+                print('[SECURITY] WARNING: SECRET_KEY looks weak/default. Set BOXCHAT_SECRET_KEY.')
+        except Exception:
+            pass
 
     # Normalize sqlite path:
     # - relative sqlite path -> project root
@@ -85,6 +145,7 @@ def create_app(config=None, init_db=True):
         try:
             if (
                 request.path.startswith('/api/')
+                or request.path == '/upload_file'
                 or request.is_json
                 or request.headers.get('X-Requested-With') == 'XMLHttpRequest'
             ):
@@ -92,6 +153,28 @@ def create_app(config=None, init_db=True):
         except Exception:
             pass
         return redirect(url_for('auth.login'))
+
+    # Return JSON for common API errors when requested by XHR/fetch.
+    try:
+        from werkzeug.exceptions import RequestEntityTooLarge
+
+        @flask_app.errorhandler(RequestEntityTooLarge)
+        def _handle_request_entity_too_large(_err):  # noqa: ANN001
+            try:
+                wants_json = (
+                    request.path.startswith('/api/')
+                    or request.path == '/upload_file'
+                    or request.is_json
+                    or request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+                    or 'application/json' in (request.headers.get('Accept', '') or '')
+                )
+                if wants_json:
+                    return jsonify({'error': 'File too large'}), 413
+            except Exception:
+                pass
+            return ('File too large', 413)
+    except Exception:
+        pass
     
     # Create upload folders
     for subdir in UPLOAD_SUBDIRS.values():
@@ -105,6 +188,23 @@ def create_app(config=None, init_db=True):
     flask_app.register_blueprint(api_bp)
     # IMPORTANT: SPA catch-all must be registered last
     flask_app.register_blueprint(spa_bp)
+
+    # Optional: mount async FastAPI under /api/async without changing the Flask stack.
+    try:
+        from werkzeug.middleware.dispatcher import DispatcherMiddleware
+        from a2wsgi import ASGIMiddleware
+        from app.fastapi_app import fastapi_app, init_fastapi
+
+        init_fastapi(flask_app)
+        flask_app.wsgi_app = DispatcherMiddleware(
+            flask_app.wsgi_app,
+            {
+                '/api/async': ASGIMiddleware(fastapi_app),
+            },
+        )
+        flask_app.config['FASTAPI_ENABLED'] = True
+    except Exception:
+        flask_app.config['FASTAPI_ENABLED'] = False
     
     # Import socket handlers
     import app.sockets  # noqa
@@ -219,19 +319,44 @@ def _init_database(flask_app):
 
 
 def _setup_admin_user():
-    # Create admin user if it doesn't exist
+    # Create admin user if it doesn't exist.
+    # IMPORTANT: never ship a hardcoded default password.
     from app.models import User
     from werkzeug.security import generate_password_hash
+    import secrets
     
     try:
-        if not User.query.filter_by(username='admin').first():
-            admin = User(
-                username='admin',
-                password=generate_password_hash('Fynjif121%', method='scrypt'),
-                is_superuser=True
-            )
-            db.session.add(admin)
-            db.session.commit()
-            print("Admin user created successfully")
+        if User.query.filter_by(username='admin').first():
+            return
+
+        password = os.environ.get('BOXCHAT_ADMIN_PASSWORD')
+        if not password:
+            # Bootstrap only when DB is empty (fresh install).
+            try:
+                has_any_users = bool(User.query.limit(1).first())
+            except Exception:
+                has_any_users = True
+
+            if has_any_users:
+                print('[SECURITY] Admin user was not created automatically. Set BOXCHAT_ADMIN_PASSWORD to create one.')
+                return
+
+            password = secrets.token_urlsafe(18)
+            print('[SECURITY] Bootstrap admin user created: username=admin')
+            print(f'[SECURITY] Bootstrap admin password: {password}')
+
+        admin = User(
+            username='admin',
+            password=generate_password_hash(password, method='scrypt'),
+            is_superuser=True,
+        )
+        db.session.add(admin)
+        db.session.commit()
+        if os.environ.get('BOXCHAT_ADMIN_PASSWORD'):
+            print('[SECURITY] Admin user created successfully (username=admin).')
     except Exception as e:
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
         print(f"Ошибка при создании админа: {e}")

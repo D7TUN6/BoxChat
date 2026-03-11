@@ -3,20 +3,24 @@ import { useParams, useRouteLoaderData, useSearchParams } from 'react-router-dom
 import {
   Alert,
   Avatar,
+  Badge,
   Box,
   Button,
+  Divider,
   IconButton,
   List,
   ListItemButton,
+  ListItemIcon,
   ListItemText,
   Menu,
+  MenuItem,
   Paper,
   Stack,
   Typography,
 } from '@mui/material'
 import { useTheme } from '@mui/material/styles'
 import useMediaQuery from '@mui/material/useMediaQuery'
-import { ArrowDown, ArrowLeft, CornerUpLeft, Forward, MoreHorizontal, Reply, SmilePlus, Download, FileText, Settings2, Users } from 'lucide-react'
+import { ArrowDown, ArrowLeft, Ban, CornerUpLeft, Forward, MessageSquare, MoreHorizontal, Reply, SmilePlus, Download, FileText, Settings2, UserPlus, UserX, Users } from 'lucide-react'
 import { io, Socket } from 'socket.io-client'
 import CustomVideoPlayer from '../ui/CustomVideoPlayer'
 import CustomAudioPlayer from '../ui/CustomAudioPlayer'
@@ -24,6 +28,7 @@ import UserCardPopover from '../ui/UserCardPopover'
 import ChatComposer from '../ui/ChatComposer'
 import MessageContextMenu from '../ui/MessageContextMenu'
 import ServerSettingsDialog from '../ui/ServerSettingsDialog'
+import ImagePreviewDialog from '../ui/ImagePreviewDialog'
 import { addNotification, clearNotificationsByHref, playNotificationSound, showBrowserNotification } from '../ui/notificationsStore'
 
 type SessionPayload = { user?: { id: number; username: string } }
@@ -119,36 +124,43 @@ export default function RoomPage() {
   const [members, setMembers] = useState<RoomMember[]>([])
   const [roles, setRoles] = useState<RoomRole[]>([])
   const [socket, setSocket] = useState<Socket | null>(null)
-  const [input, setInput] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [mobileMembersOpen, setMobileMembersOpen] = useState(false)
   const [sendingFile, setSendingFile] = useState(false)
 
   const [msgMenu, setMsgMenu] = useState<{ mouseX: number; mouseY: number; msg: MessageItem } | null>(null)
+  const [avatarMenu, setAvatarMenu] = useState<{ mouseX: number; mouseY: number; userId: number; username: string } | null>(null)
   const [reactionMenu, setReactionMenu] = useState<{ mouseX: number; mouseY: number; msg: MessageItem } | null>(null)
   const [allowedReactions, setAllowedReactions] = useState<string[]>([])
 
   const [replyTo, setReplyTo] = useState<{ id: number; username: string; snippet: string } | null>(null)
 
-  const [mentionQuery, setMentionQuery] = useState('')
-  const [mentionStart, setMentionStart] = useState<number | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
-  const messagesEndRef = useRef<HTMLDivElement | null>(null)
   const lastChannelIdRef = useRef<number | null>(null)
   const [jumpToPresent, setJumpToPresent] = useState(false)
   const [highlightMsgId, setHighlightMsgId] = useState<number | null>(null)
   const [unreadMentionIds, setUnreadMentionIds] = useState<Set<number>>(new Set())
-  const pendingBottomRef = useRef(false)
+  const [unreadBelowCount, setUnreadBelowCount] = useState(0)
+  const [scrollActionNonce, setScrollActionNonce] = useState(0)
+  const scrollActionTokenRef = useRef(0)
+  const pendingScrollRef = useRef<{ type: 'bottom'; token: number } | { type: 'message'; messageId: number; token: number } | null>(null)
+  const lastReadMessageIdRef = useRef<number | null>(null)
   const prefetchingRef = useRef(false)
   const pendingPrependRef = useRef<{ prevHeight: number; prevTop: number } | null>(null)
 
   const [userCardAnchor, setUserCardAnchor] = useState<HTMLElement | null>(null)
   const [userCardUserId, setUserCardUserId] = useState<number | null>(null)
+  const [imagePreview, setImagePreview] = useState<{ src: string; title?: string } | null>(null)
 
   const myMember = useMemo(() => members.find((m) => m.id === session?.user?.id), [members, session?.user?.id])
   const isRoomAdmin = myMember?.role === 'owner' || myMember?.role === 'admin'
+  const avatarMenuMember = useMemo(() => {
+    const uid = Number(avatarMenu?.userId || 0)
+    if (!uid) return null
+    return members.find((m) => Number(m.id) === uid) || null
+  }, [avatarMenu?.userId, members])
   const hasManageChannelsPerm = Boolean(room?.my_permissions?.includes('manage_channels'))
   const isMutedInRoom = useMemo(() => {
     const ts = myMember?.muted_until
@@ -194,19 +206,6 @@ export default function RoomPage() {
     const tokens = (content || '').match(/@[\p{L}\p{N}_-]{2,60}/gu) || []
     return tokens.some((t) => t.slice(1).toLowerCase() === myName)
   }
-
-  const mentionCandidates = useMemo(() => {
-    if (mentionStart == null) return []
-    const q = mentionQuery.toLowerCase()
-    const roleItems = roles
-      .filter((r) => !q || r.mention_tag.toLowerCase().startsWith(q))
-      .map((r) => ({ type: 'role' as const, value: r.mention_tag }))
-    const userItems = members
-      .filter((m) => m.id !== session?.user?.id)
-      .filter((m) => !q || m.username.toLowerCase().startsWith(q))
-      .map((m) => ({ type: 'user' as const, value: m.username }))
-    return [...roleItems, ...userItems].slice(0, 10)
-  }, [mentionStart, mentionQuery, roles, members, session?.user?.id])
 
   const roleById = useMemo(() => {
     const map = new Map<number, RoomRole>()
@@ -288,6 +287,22 @@ export default function RoomPage() {
     return remaining < threshold
   }
 
+  function queueScrollToBottom() {
+    scrollActionTokenRef.current += 1
+    pendingScrollRef.current = { type: 'bottom', token: scrollActionTokenRef.current }
+    setUnreadBelowCount(0)
+    setJumpToPresent(false)
+    setScrollActionNonce((n) => n + 1)
+  }
+
+  function queueScrollToMessage(messageId: number) {
+    const id = Number(messageId || 0)
+    if (!id) return
+    scrollActionTokenRef.current += 1
+    pendingScrollRef.current = { type: 'message', messageId: id, token: scrollActionTokenRef.current }
+    setScrollActionNonce((n) => n + 1)
+  }
+
   async function loadRoomData(options?: { preserveSelection?: boolean }) {
     const roomRes = await fetch('/api/v1/rooms', {
       credentials: 'include',
@@ -356,6 +371,7 @@ export default function RoomPage() {
       reply_to: replyTo ? { id: replyTo.id } : null,
     })
     setReplyTo(null)
+    queueScrollToBottom()
   }
 
   async function toggleReaction(messageId: number, emoji: string) {
@@ -426,19 +442,24 @@ export default function RoomPage() {
     setMessages((prev) => prev.filter((m) => Number(m.id) !== Number(messageId)))
   }
 
-  async function loadMessagesPage(nextOffset: number, reset: boolean) {
-    if (!channelId) return
-    if (!reset && scrollRef.current) {
+  async function loadMessagesPage(nextOffset: number, reset: boolean, preserveScrollOnPrepend = true) {
+    if (!channelId) return { page: [] as MessageItem[], hasMore: false, lastReadMessageId: null as number | null }
+    const requestChannelId = Number(channelId || 0)
+    if (!requestChannelId) return { page: [] as MessageItem[], hasMore: false, lastReadMessageId: null as number | null }
+    if (!reset && preserveScrollOnPrepend && scrollRef.current) {
       const el = scrollRef.current
       pendingPrependRef.current = { prevHeight: el.scrollHeight, prevTop: el.scrollTop }
     }
     const limit = 50
-    const res = await fetch(`/api/v1/channel/${channelId}/messages?limit=${limit}&offset=${nextOffset}`, {
+    const res = await fetch(`/api/v1/channel/${requestChannelId}/messages?limit=${limit}&offset=${nextOffset}`, {
       credentials: 'include',
       headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
     }).catch(() => null)
-    if (!res?.ok) return
+    if (!res?.ok) return { page: [] as MessageItem[], hasMore: false, lastReadMessageId: null as number | null }
     const payload = await res.json().catch(() => null)
+    if (Number(lastChannelIdRef.current || 0) !== requestChannelId) {
+      return { page: [] as MessageItem[], hasMore: false, lastReadMessageId: null as number | null }
+    }
     const base: MessageItem[] = (payload?.messages ?? []).map((m: any) => ({
       id: m.id,
       user_id: m.user_id,
@@ -453,6 +474,11 @@ export default function RoomPage() {
       reply_to: null,
       mention_me: false,
     }))
+    const rawLastRead = Number(payload?.last_read_message_id || 0)
+    const lastReadMessageId = rawLastRead > 0 ? rawLastRead : null
+    if (reset) {
+      lastReadMessageIdRef.current = lastReadMessageId
+    }
 
     const byId = new Map<number, MessageItem>()
     for (const m of base) byId.set(Number(m.id), m)
@@ -465,7 +491,8 @@ export default function RoomPage() {
       m.reply_to = { id: orig.id, username: orig.username, snippet }
     }
 
-    setHasMore(base.length === limit)
+    const nextHasMore = base.length === limit
+    setHasMore(nextHasMore)
     setOffset(nextOffset)
     setMessages((prev) => {
       if (reset) return base
@@ -473,6 +500,7 @@ export default function RoomPage() {
       const merged = [...base.filter((m) => !existing.has(Number(m.id))), ...prev]
       return merged
     })
+    return { page: base, hasMore: nextHasMore, lastReadMessageId }
   }
 
   useEffect(() => {
@@ -513,40 +541,86 @@ export default function RoomPage() {
 
   useEffect(() => {
     if (!channelId) return
-    pendingBottomRef.current = true
     setHasMore(true)
     setOffset(0)
-    void loadMessagesPage(0, true)
+    setUnreadBelowCount(0)
+    setLoadingOlder(false)
+    lastChannelIdRef.current = channelId
+    lastReadMessageIdRef.current = null
+    pendingScrollRef.current = null
+
+    let cancelled = false
+    async function loadAndScrollToLastRead() {
+      const first = await loadMessagesPage(0, true, false)
+      if (cancelled) return
+      const lastRead = first.lastReadMessageId
+      lastReadMessageIdRef.current = lastRead
+      if (!lastRead) {
+        queueScrollToBottom()
+        return
+      }
+      const limit = 50
+      const MAX_PAGES = 80
+      let found = first.page.some((m) => Number(m.id) === lastRead)
+      let more = first.hasMore
+      let nextOffset = 0
+      let pages = 0
+      while (!found && more && pages < MAX_PAGES) {
+        nextOffset += limit
+        const page = await loadMessagesPage(nextOffset, false, false)
+        if (cancelled) return
+        found = page.page.some((m) => Number(m.id) === lastRead)
+        more = page.hasMore
+        pages += 1
+      }
+      if (found) queueScrollToMessage(lastRead)
+      else queueScrollToBottom()
+    }
+    void loadAndScrollToLastRead()
+
+    return () => {
+      cancelled = true
+    }
   }, [channelId])
 
   useEffect(() => {
-    if (!pendingBottomRef.current) return
-    if (!messages.length) {
-      pendingBottomRef.current = false
-      return
-    }
+    const action = pendingScrollRef.current
+    if (!action) return
 
-    let rowCount = 0
-    for (let idx = 0; idx < messages.length; idx += 1) {
-      const m = messages[idx]
-      const prev = idx > 0 ? messages[idx - 1] : null
-      const showDate = !prev || dayKey(prev.timestamp) !== dayKey(m.timestamp)
-      if (showDate) rowCount += 1
-      rowCount += 1
-    }
-
-    if (rowCount <= 0) return
-    window.requestAnimationFrame(() => {
+    const token = action.token
+    let attempts = 0
+    const tryScroll = () => {
+      if (pendingScrollRef.current?.token !== token) return
       const el = scrollRef.current
-      if (el) {
+      if (!el) return
+      if (action.type === 'bottom') {
         el.scrollTop = el.scrollHeight
+        setUnreadBelowCount(0)
+        setJumpToPresent(false)
+        pendingScrollRef.current = null
+        return
       }
-      void markChannelAsRead()
-      clearUnreadMentions()
-      pendingBottomRef.current = false
+      const target = document.getElementById(`msg-${action.messageId}`)
+      if (target) {
+        target.scrollIntoView({ behavior: 'auto', block: 'center' })
+        const unread = messages.reduce((acc, m) => acc + (Number(m.id) > action.messageId ? 1 : 0), 0)
+        setUnreadBelowCount(unread)
+        pendingScrollRef.current = null
+        return
+      }
+      attempts += 1
+      if (attempts < 6) {
+        window.requestAnimationFrame(tryScroll)
+        return
+      }
+      el.scrollTop = el.scrollHeight
+      setUnreadBelowCount(0)
       setJumpToPresent(false)
-    })
-  }, [messages.length, channelId])
+      pendingScrollRef.current = null
+    }
+
+    window.requestAnimationFrame(tryScroll)
+  }, [scrollActionNonce, messages.length, channelId])
 
   useEffect(() => {
     const pend = pendingPrependRef.current
@@ -569,6 +643,8 @@ export default function RoomPage() {
       if (Number(data.channel_id ?? channelId) !== Number(channelId)) return
       const el = scrollRef.current
       const wasNearBottom = isNearBottom(el, 180)
+      const myId = Number(session?.user?.id || 0)
+      const isFromSelf = Number(data?.user_id || 0) === myId
 
       const isFocused = typeof document !== 'undefined' ? document.hasFocus() : true
       setMessages((prev) => [
@@ -588,6 +664,13 @@ export default function RoomPage() {
           mention_me: false,
         },
       ])
+
+      if (wasNearBottom || isFromSelf) {
+        queueScrollToBottom()
+      } else {
+        setUnreadBelowCount((prev) => prev + 1)
+        setJumpToPresent(true)
+      }
 
       const isFromOther = Number(data?.user_id || 0) !== Number(session?.user?.id || 0)
       const mentionMe = isMentioningMe(data.msg ?? '', data?.mentions?.user_ids)
@@ -668,10 +751,6 @@ export default function RoomPage() {
   }, [messages.length, unreadMentionIds.size, channelId])
 
   useEffect(() => {
-    lastChannelIdRef.current = channelId
-  }, [channelId])
-
-  useEffect(() => {
     if (!isMobile || !channelId) {
       setMobileMembersOpen(false)
     }
@@ -692,28 +771,6 @@ export default function RoomPage() {
     return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`
   }
 
-  function trackMention(value: string, caret: number) {
-    const left = value.slice(0, caret)
-    const match = left.match(/(?:^|\s)@([a-zA-Z0-9_-]*)$/)
-    if (!match) {
-      setMentionStart(null)
-      setMentionQuery('')
-      return
-    }
-    const q = match[1] ?? ''
-    setMentionQuery(q)
-    setMentionStart(caret - q.length - 1)
-  }
-
-  function applyMention(mentionValue: string) {
-    if (mentionStart === null) return
-    const before = input.slice(0, mentionStart)
-    const next = `${before}@${mentionValue} `
-    setInput(next)
-    setMentionQuery('')
-    setMentionStart(null)
-  }
-
   function openChannelOnMobile(nextChannelId: number) {
     setChannelId(nextChannelId)
     setSearchParams((prev) => {
@@ -732,30 +789,29 @@ export default function RoomPage() {
     })
   }
 
-  async function sendMessage() {
-    if (!socket || !roomId || !channelId || !canWriteInChannel) return
-    const text = input.trim()
-    if (!text) return
+  async function sendMessageText(text: string): Promise<boolean> {
+    if (!socket || !roomId || !channelId || !canWriteInChannel) return false
+    const msg = text.trim()
+    if (!msg) return false
     socket.emit('send_message', {
       room_id: Number(roomId),
       channel_id: channelId,
-      msg: text,
+      msg,
       message_type: 'text',
       reply_to: replyTo ? { id: replyTo.id } : null,
     })
-    setInput('')
-    setMentionQuery('')
-    setMentionStart(null)
     setReplyTo(null)
+    queueScrollToBottom()
+    return true
   }
 
-  async function uploadAndSendFile(file: File) {
-    if (!socket || !roomId || !channelId || !canWriteInChannel) return
+  async function uploadAndSendFile(file: File, caption: string): Promise<boolean> {
+    if (!socket || !roomId || !channelId || !canWriteInChannel) return false
     const MAX_5GB = 5 * 1024 * 1024 * 1024
     if (file.size > MAX_5GB) {
-      setError('Лимит файла — 5 GB')
+      setError('File limit is 5 GB.')
       if (fileInputRef.current) fileInputRef.current.value = ''
-      return
+      return false
     }
     setSendingFile(true)
     setError(null)
@@ -765,23 +821,32 @@ export default function RoomPage() {
       const uploadRes = await fetch('/upload_file', {
         method: 'POST',
         credentials: 'include',
+        headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
         body: form,
       })
       const payload = await uploadRes.json().catch(() => null)
-      if (!uploadRes.ok || !payload?.url) throw new Error(payload?.error ?? 'upload failed')
+      if (!uploadRes.ok || !payload?.url) {
+        const msg =
+          String(payload?.error || '') ||
+          (uploadRes.status === 413 ? 'File too large' : '') ||
+          `upload failed (HTTP ${uploadRes.status})`
+        throw new Error(msg)
+      }
 
       socket.emit('send_message', {
         room_id: Number(roomId),
         channel_id: channelId,
-        msg: input.trim(),
+        msg: String(caption || '').trim(),
         message_type: payload.type || 'file',
         file_url: payload.url,
         reply_to: replyTo ? { id: replyTo.id } : null,
       })
-      setInput('')
       setReplyTo(null)
+      queueScrollToBottom()
+      return true
     } catch (e: any) {
       setError(e?.message ?? 'upload failed')
+      return false
     } finally {
       setSendingFile(false)
       if (fileInputRef.current) fileInputRef.current.value = ''
@@ -872,11 +937,31 @@ export default function RoomPage() {
     if (type === 'image' && !m.file_url) {
       const maybeUrl = (m.content || '').trim()
       if (/^https?:\/\//.test(maybeUrl)) {
-        return <Box component="img" src={maybeUrl} alt="attachment" loading="lazy" draggable={false} sx={imageSx} />
+        return (
+          <Box
+            component="img"
+            src={maybeUrl}
+            alt="attachment"
+            loading="lazy"
+            draggable={false}
+            onClick={() => setImagePreview({ src: maybeUrl, title: 'Image' })}
+            sx={{ ...imageSx, cursor: 'pointer' }}
+          />
+        )
       }
     }
     if ((type === 'image' || type === 'sticker') && m.file_url) {
-      return <Box component="img" src={m.file_url} alt="attachment" loading="lazy" draggable={false} sx={imageSx} />
+      return (
+        <Box
+          component="img"
+          src={m.file_url}
+          alt="attachment"
+          loading="lazy"
+          draggable={false}
+          onClick={() => setImagePreview({ src: m.file_url || '', title: (m.file_url || '').split('/').pop() || 'Image' })}
+          sx={{ ...imageSx, cursor: 'pointer' }}
+        />
+      )
     }
     if (type === 'video' && m.file_url) {
       return (
@@ -1116,6 +1201,7 @@ export default function RoomPage() {
                 if (remaining < 80) {
                   void markChannelAsRead()
                   clearUnreadMentions()
+                  setUnreadBelowCount(0)
                 }
 
                 if (prefetchingRef.current) return
@@ -1176,6 +1262,16 @@ export default function RoomPage() {
                             onClick={(e) => {
                               setUserCardAnchor(e.currentTarget)
                               setUserCardUserId(m.user_id)
+                            }}
+                            onContextMenu={(e) => {
+                              e.preventDefault()
+                              e.stopPropagation()
+                              setAvatarMenu({
+                                mouseX: e.clientX + 2,
+                                mouseY: e.clientY - 6,
+                                userId: m.user_id,
+                                username: m.username,
+                              })
                             }}
                           >
                             {m.username.slice(0, 2).toUpperCase()}
@@ -1282,35 +1378,35 @@ export default function RoomPage() {
                   </Box>
                 )
               })}
-              <div ref={messagesEndRef} style={{ height: 1 }} />
             </Box>
 
-            {jumpToPresent ? (
+            {jumpToPresent || unreadBelowCount > 0 ? (
               <Box sx={{ position: 'absolute', right: 14, bottom: 14, display: 'flex', justifyContent: 'flex-end', zIndex: 28 }}>
-                <IconButton
-                  size="medium"
-                  color="primary"
-                  onClick={() => {
-                    try {
-                      const el = scrollRef.current
-                      if (el) el.scrollTop = el.scrollHeight
-                    } catch {
-                      // ignore
-                    }
-                    setJumpToPresent(false)
-                  }}
-                  sx={{
-                    width: 46,
-                    height: 46,
-                    bgcolor: 'background.paper',
-                    border: '1px solid',
-                    borderColor: 'divider',
-                    boxShadow: (t) => (t.palette.mode === 'dark' ? '0 10px 26px rgba(0,0,0,.45)' : '0 10px 26px rgba(0,0,0,.2)'),
-                    '&:hover': { bgcolor: 'background.default' },
-                  }}
+                <Badge
+                  color="success"
+                  badgeContent={unreadBelowCount}
+                  invisible={!unreadBelowCount}
+                  overlap="circular"
+                  anchorOrigin={{ vertical: 'top', horizontal: 'left' }}
+                  sx={{ '& .MuiBadge-badge': { fontWeight: 900, minWidth: 20, height: 20 } }}
                 >
-                  <ArrowDown size={20} />
-                </IconButton>
+                  <IconButton
+                    size="medium"
+                    color="primary"
+                    onClick={() => queueScrollToBottom()}
+                    sx={{
+                      width: 46,
+                      height: 46,
+                      bgcolor: 'background.paper',
+                      border: '1px solid',
+                      borderColor: 'divider',
+                      boxShadow: (t) => (t.palette.mode === 'dark' ? '0 10px 26px rgba(0,0,0,.45)' : '0 10px 26px rgba(0,0,0,.2)'),
+                      '&:hover': { bgcolor: 'background.default' },
+                    }}
+                  >
+                    <ArrowDown size={20} />
+                  </IconButton>
+                </Badge>
               </Box>
             ) : null}
           </Box>
@@ -1319,23 +1415,20 @@ export default function RoomPage() {
         {!mobileMembersOpen && canWriteInChannel ? (
           <ChatComposer
             channelId={channelId}
-            input={input}
-            setInput={setInput}
             placeholder={channelId ? `Message #${activeChannel?.name ?? ''}` : 'Select a channel'}
-            onSend={() => void sendMessage()}
+            onSendText={sendMessageText}
             sendingFile={sendingFile}
             fileInputRef={fileInputRef}
-            onPickFile={(f) => {
-              void uploadAndSendFile(f)
-            }}
-            mentionCandidates={mentionCandidates as any}
-            applyMention={applyMention}
-            onTrackMention={trackMention}
-            replyTo={replyTo as any}
+            onSendFile={uploadAndSendFile}
+            mentionUsers={members}
+            mentionRoles={roles}
+            currentUserId={session?.user?.id}
+            replyTo={replyTo}
             onClearReply={() => setReplyTo(null)}
             onPickGif={(url) => {
               void sendGif(url)
             }}
+            disabled={!canWriteInChannel}
           />
         ) : !mobileMembersOpen ? (
           <Box
@@ -1466,6 +1559,149 @@ export default function RoomPage() {
       />
 
       <Menu
+        open={Boolean(avatarMenu)}
+        onClose={() => setAvatarMenu(null)}
+        anchorReference="anchorPosition"
+        anchorPosition={avatarMenu ? { top: avatarMenu.mouseY, left: avatarMenu.mouseX } : undefined}
+        PaperProps={{
+          sx: {
+            borderRadius: 2,
+            minWidth: 240,
+            border: '1px solid',
+            borderColor: 'divider',
+            overflow: 'hidden',
+          },
+        }}
+      >
+        {(() => {
+          const targetUserId = Number(avatarMenu?.userId || 0)
+          const targetUsername = avatarMenuMember?.username || String(avatarMenu?.username || '')
+          const myId = Number(session?.user?.id || 0)
+          const isSelf = Boolean(targetUserId && myId && targetUserId === myId)
+
+          const myRole = myMember?.role || 'member'
+          const targetRole = avatarMenuMember?.role || 'member'
+          const myRank = myRole === 'owner' ? 3 : myRole === 'admin' ? 2 : 1
+          const targetRank = targetRole === 'owner' ? 3 : targetRole === 'admin' ? 2 : 1
+          const canModerate = Boolean(roomId && isRoomAdmin && !isSelf && myRank > targetRank && myRank >= 2)
+
+          return (
+            <>
+              {!isSelf ? (
+                <MenuItem
+                  onClick={async () => {
+                    if (!targetUsername) return
+                    setAvatarMenu(null)
+                    const res = await fetch('/api/v1/friends/request', {
+                      method: 'POST',
+                      credentials: 'include',
+                      headers: {
+                        'Content-Type': 'application/json',
+                        Accept: 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest',
+                      },
+                      body: JSON.stringify({ username: targetUsername }),
+                    }).catch(() => null)
+                    const payload = await res?.json().catch(() => null)
+                    if (!res?.ok) {
+                      setError(String(payload?.error || 'Failed to send friend request'))
+                      return
+                    }
+                    const status = String(payload?.status || '')
+                    if (status === 'already_friends') setError("You're already friends.")
+                    else if (status === 'pending') setError('Friend request is already pending.')
+                    else setError('Friend request sent.')
+                    window.setTimeout(() => setError(null), 1500)
+                  }}
+                >
+                  <ListItemIcon sx={{ minWidth: 34 }}>
+                    <UserPlus size={16} />
+                  </ListItemIcon>
+                  Send friend request
+                </MenuItem>
+              ) : null}
+
+              {!isSelf ? (
+                <MenuItem
+                  onClick={async () => {
+                    if (!targetUserId) return
+                    setAvatarMenu(null)
+                    const res = await fetch(`/api/v1/dm/${targetUserId}/create`, {
+                      method: 'POST',
+                      credentials: 'include',
+                      headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+                    }).catch(() => null)
+                    const payload = await res?.json().catch(() => null)
+                    const dmRoomId = Number(payload?.room_id || 0)
+                    if (dmRoomId > 0) {
+                      window.location.href = `/room/${dmRoomId}`
+                      return
+                    }
+                    setError(String(payload?.error || 'Failed to open DM'))
+                  }}
+                >
+                  <ListItemIcon sx={{ minWidth: 34 }}>
+                    <MessageSquare size={16} />
+                  </ListItemIcon>
+                  Message
+                </MenuItem>
+              ) : null}
+
+              {canModerate ? <Divider /> : null}
+
+              {canModerate ? (
+                <MenuItem
+                  onClick={async () => {
+                    const rid = Number(roomId || 0)
+                    if (!rid || !targetUserId) return
+                    setAvatarMenu(null)
+                    await fetch(`/admin/user/${targetUserId}/kick_from_room/${rid}`, {
+                      method: 'POST',
+                      credentials: 'include',
+                      headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+                    }).catch(() => null)
+                    void loadRoomData({ preserveSelection: true })
+                  }}
+                >
+                  <ListItemIcon sx={{ minWidth: 34 }}>
+                    <UserX size={16} />
+                  </ListItemIcon>
+                  Kick
+                </MenuItem>
+              ) : null}
+
+              {canModerate ? (
+                <MenuItem
+                  onClick={async () => {
+                    const rid = Number(roomId || 0)
+                    if (!rid || !targetUserId) return
+                    setAvatarMenu(null)
+                    await fetch(`/admin/user/${targetUserId}/ban`, {
+                      method: 'POST',
+                      credentials: 'include',
+                      headers: {
+                        'Content-Type': 'application/json',
+                        Accept: 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest',
+                      },
+                      body: JSON.stringify({ room_id: rid, reason: 'Moderation action' }),
+                    }).catch(() => null)
+                    void loadRoomData({ preserveSelection: true })
+                  }}
+                  sx={{ color: 'error.main' }}
+                >
+                  <ListItemIcon sx={{ minWidth: 34, color: 'error.main' }}>
+                    <Ban size={16} />
+                  </ListItemIcon>
+                  Ban
+                </MenuItem>
+              ) : null}
+            </>
+          )
+        })()}
+      </Menu>
+
+      <Menu
         open={Boolean(reactionMenu)}
         onClose={() => setReactionMenu(null)}
         anchorReference="anchorPosition"
@@ -1506,6 +1742,13 @@ export default function RoomPage() {
           setUserCardAnchor(null)
           setUserCardUserId(null)
         }}
+      />
+
+      <ImagePreviewDialog
+        open={Boolean(imagePreview)}
+        src={imagePreview?.src ?? null}
+        title={imagePreview?.title}
+        onClose={() => setImagePreview(null)}
       />
     </Box>
   )

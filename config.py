@@ -26,7 +26,8 @@ _defaults = {
     'REMEMBER_COOKIE_HTTPONLY': True,
     'REMEMBER_COOKIE_SAMESITE': 'Lax',
     'REMEMBER_COOKIE_SECURE': False,
-    'MAX_CONTENT_LENGTH': 50 * 1024 * 1024 * 1024 * 1024 * 1024 * 1024,
+    # Default upload cap (bytes). Align with frontend limit (5 GiB).
+    'MAX_CONTENT_LENGTH': 5 * 1024 * 1024 * 1024,
     'ALLOWED_EXTENSIONS': [
         'png', 'jpg', 'jpeg', 'gif', 'webp',
         'mp3', 'ogg', 'flac', 'wav', 'midi', 'mid',

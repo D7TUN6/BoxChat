@@ -10,6 +10,7 @@ from sqlalchemy import func
 from app.extensions import db
 from app.models import User, AuthThrottle
 from app.routes.spa import send_spa_index
+from app.utils.ip import get_client_ip as _get_client_ip
 import re
 
 auth_bp = Blueprint('auth', __name__)
@@ -19,12 +20,46 @@ MAX_FAILED_IP_ATTEMPTS = 15
 LOCKOUT_MINUTES = 15
 IP_LOCKOUT_MINUTES = 30
 ATTEMPT_WINDOW_MINUTES = 15
+_BANNED_IP_CACHE = {'expires_at': None, 'ips': set()}
+
+
+def _banned_ip_cache_ttl_seconds() -> int:
+    try:
+        return max(0, int(os.environ.get('BOXCHAT_BANNED_IP_CACHE_TTL_SECONDS') or 30))
+    except Exception:
+        return 30
+
+
+def _get_banned_ips_cached(now: datetime):
+    ttl = _banned_ip_cache_ttl_seconds()
+    expires_at = _BANNED_IP_CACHE.get('expires_at')
+    if ttl > 0 and expires_at and expires_at > now:
+        return _BANNED_IP_CACHE.get('ips') or set()
+
+    ips = set()
+    try:
+        rows = (
+            User.query.with_entities(User.banned_ips)
+            .filter(User.is_banned.is_(True), User.banned_ips != '')
+            .all()
+        )
+        for (raw,) in rows:
+            if not raw:
+                continue
+            for token in str(raw).split(','):
+                t = token.strip()
+                if t:
+                    ips.add(t)
+    except Exception:
+        ips = set()
+
+    if ttl > 0:
+        _BANNED_IP_CACHE['ips'] = ips
+        _BANNED_IP_CACHE['expires_at'] = now + timedelta(seconds=ttl)
+    return ips
 
 def get_client_ip():
-    # Safely get client IP address
-    if request.headers.get('X-Forwarded-For'):
-        return request.headers.get('X-Forwarded-For').split(',')[0].strip()
-    return request.remote_addr
+    return _get_client_ip(request) or ''
 
 def validate_username(username):
     # Validate username format and length
@@ -81,13 +116,11 @@ def get_request_value(name, default=''):
 
 def is_ip_banned(ip):
     # Check if IP is in banned list
-    banned_users = User.query.filter_by(is_banned=True).all()
-    for user in banned_users:
-        if user.banned_ips:
-            ips = [ip_addr.strip() for ip_addr in user.banned_ips.split(',') if ip_addr.strip()]
-            if ip in ips:
-                return True
-    return False
+    ip = str(ip or '').strip()
+    if not ip:
+        return False
+    now = datetime.utcnow()
+    return ip in _get_banned_ips_cached(now)
 
 def is_true_value(value):
     if isinstance(value, bool):

@@ -108,9 +108,17 @@ def register_friends_routes(api_bp):
         incoming = FriendRequest.query.filter_by(to_user_id=current_user.id, status='pending').order_by(FriendRequest.id.desc()).limit(50).all()
         outgoing = FriendRequest.query.filter_by(from_user_id=current_user.id, status='pending').order_by(FriendRequest.id.desc()).limit(50).all()
 
+        other_ids = set()
+        for fr in incoming:
+            other_ids.add(int(fr.from_user_id))
+        for fr in outgoing:
+            other_ids.add(int(fr.to_user_id))
+        users = User.query.filter(User.id.in_(sorted(other_ids))).all() if other_ids else []
+        user_by_id = {int(u.id): u for u in users}
+
         def _serialize(fr):
             other_id = fr.from_user_id if fr.to_user_id == current_user.id else fr.to_user_id
-            other = User.query.get(other_id)
+            other = user_by_id.get(int(other_id))
             return {
                 'id': fr.id,
                 'status': fr.status,
