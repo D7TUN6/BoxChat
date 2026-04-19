@@ -1,6 +1,12 @@
+# Warning
+
+BoxChat is discontinued and archived.
+consider using https://github.com/combox/ComBox instead
+
 # BoxChat Messenger
 
 BoxChat is a simple, self-hosted messenger application.
+
 
 ## Stack
 
